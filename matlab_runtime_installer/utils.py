@@ -7,6 +7,7 @@ import sys
 import zipfile
 from datetime import datetime
 from urllib import error, parse, request
+from xml.etree import ElementTree
 
 # ----------------------------------------------------------------------
 #   EXCEPTIONS
@@ -181,25 +182,71 @@ def guess_prefix():
 
 
 # ----------------------------------------------------------------------
+#   MATLAB SDK
+# ----------------------------------------------------------------------
+
+
+def guess_pymatlab_version(matlab):
+    return _guess_pymatlab(matlab, "version")
+
+
+def guess_pymatlab_release(matlab):
+    return _guess_pymatlab(matlab, "release")
+
+
+def _guess_pymatlab(matlab, key):
+    path = matlab.get_arch_filename()
+    while path:
+        if op.exists(op.join(path, 'VersionInfo.xml')):
+            path = op.join(path, 'VersionInfo.xml')
+            tree = ElementTree.parse(path)
+            version = tree.find(key).text
+            return version
+        else:
+            path = op.dirname(path)
+    raise ValueError(f"Could not guess matlab {key} from python module")
+
+
+# ----------------------------------------------------------------------
 #   INSTALLERS
 # ----------------------------------------------------------------------
 
 
-def translate_version(version):
+def matlab_release(version):
+    """Convert MATLAB version (e.g. 24.2) to release (e.g. R2024b)."""
+    if isinstance(version, (list, tuple)):
+        version = ".".join(map(str(version[:2])))
     if version[:1] == "R":
         return version
-    if version in RUNTIME_VERSION_MAP:
-        return RUNTIME_VERSION_MAP[version]
-    year, release = version.split(".")
-    return "R20" + year + {"1": "a", "2": "b"}[release]
+    if version in VERSION_TO_RELEASE:
+        return VERSION_TO_RELEASE[version]
+    year, release, *_ = version.split(".")
+    return "R20" + year + ("abcdefghijklmnopqrstuvwxy"[int(release)+1])
 
 
-def guess_version(version, arch=None):
+def matlab_version(version):
+    """Convert MATLAB release (e.g. R2024b) to version (e.g. 24.2)."""
+    # 1. look for version in dict of known versions
+    if isinstance(version, (list, tuple)):
+        version = ".".join(map(str(version[:2])))
+    for runtime_version, matlab_version in VERSION_TO_RELEASE.items():
+        if version in (runtime_version, matlab_version):
+            return runtime_version
+    # 2. if does not look like a matlab version, hope it's a runtime version
+    if version[:1] != "R":
+        return version
+    # 3. convert matlab version to runtime version using new scheme
+    year, letter = version[3:5], version[5]
+    return year + "." + str("abcdefghijklmnopqrstuvwxy".index(letter) + 1)
+
+
+def guess_release(version, arch=None):
+    """Guess version (if "latest") + convert to MATLAB release (e.g. R2024b)"""
     arch = arch or guess_arch()
     if version.lower() == "latest":
         year = str(datetime.now().year)
-        for release in ("b", "a"):
-            maybe_version = "R" + year + release
+        for letter in ("b", "a"):
+            maybe_version = "R" + year + letter
             try:
                 guess_installer(maybe_version)
                 version = maybe_version
@@ -211,13 +258,14 @@ def guess_version(version, arch=None):
             version = next(iter(
                 sorted(INSTALLERS[arch].keys(), reverse=True)
             ))
-    return translate_version(version)
+    return matlab_release(version)
 
 
 def guess_installer(version, arch=None):
+    """Find installer URL from version or release, for an arch."""
     arch = arch or guess_arch()
     error = VersionNotFoundError(f"No {version} installer found for Win{arch}")
-    version = translate_version(version)
+    version = matlab_release(version)
     if version in INSTALLERS[arch]:
         return INSTALLERS[arch][version]
     else:
@@ -236,11 +284,11 @@ def guess_installer(version, arch=None):
 # ----------------------------------------------------------------------
 
 
-RUNTIME_VERSION_MAP = {
-    # Starting with R2023b, the runtime version scheme matches the
-    # matlab release scheme, i.e., 23.2 === R2023b.
-    # This dictionary contains a "runtime to matlab" version map for
-    # versions prior to R2023b.
+VERSION_TO_RELEASE = {
+    # Starting with R2023b, the version scheme matches the release scheme,
+    # i.e., 23.2 === R2023b.
+    # This dictionary contains a "version to release" map for
+    # releases prior to R2023b.
     "9.14": "R2023a",
     "9.13": "R2022b",
     "9.12": "R2022a",
@@ -267,7 +315,7 @@ RUNTIME_VERSION_MAP = {
     "7.17": "R2012a",
 }
 
-RELEASE_UPDATE_MAP = {
+RELEASE_TO_UPDATE = {
     "R2024b": "5",
     "R2024a": "7",
     "R2023b": "10",
@@ -293,17 +341,17 @@ INSTALLERS = {
 
 # Links @ https://uk.mathworks.com/products/compiler/matlab-runtime.html
 
-# Links for versions >= R2019a
+# Links for releases >= R2019a
 TEMPLATE2 = (
-    "https://ssd.mathworks.com/supportfiles/downloads/{version}"
+    "https://ssd.mathworks.com/supportfiles/downloads/{release}"
     "/Release/{update}/deployment_files/installer/complete/{arch}"
-    "/MATLAB_Runtime_{version}_Update_{update}_{arch}.{ext}"
+    "/MATLAB_Runtime_{release}_Update_{update}_{arch}.{ext}"
 )
-# Links for versions < R2019a
+# Links for releases < R2019a
 TEMPLATE1 = (
-    "https://ssd.mathworks.com/supportfiles/downloads/{version}"
-    "/deployment_files/{version}/installers/{arch}"
-    "/MCR_{version}_{arch}_installer.{ext}"
+    "https://ssd.mathworks.com/supportfiles/downloads/{release}"
+    "/deployment_files/{release}/installers/{arch}"
+    "/MCR_{release}_{arch}_installer.{ext}"
 )
 
 # NOTE:
@@ -319,21 +367,21 @@ TEMPLATE1 = (
 
 A = "win64"
 E = "zip"
-for V, U in RELEASE_UPDATE_MAP.items():
-    INSTALLERS[A][V] = TEMPLATE2.format(version=V, update=U, arch=A, ext=E)
+for R, U in RELEASE_TO_UPDATE.items():
+    INSTALLERS[A][R] = TEMPLATE2.format(release=R, update=U, arch=A, ext=E)
 
 E = "exe"
 for Y in range(12, 19):
     for R in ("a", "b"):
-        V = f"R20{Y}{R}"
-        INSTALLERS[A][V] = TEMPLATE1.format(version=V, arch=A, ext=E)
+        R = f"R20{Y}{R}"
+        INSTALLERS[A][R] = TEMPLATE1.format(release=R, arch=A, ext=E)
 
 A = "win32"
 E = "exe"
 for Y in range(12, 16):
     for R in ("a", "b"):
-        V = f"R20{Y}{R}"
-        INSTALLERS[A][V] = TEMPLATE1.format(version=V, arch=A, ext=E)
+        R = f"R20{Y}{R}"
+        INSTALLERS[A][R] = TEMPLATE1.format(release=R, arch=A, ext=E)
 
 
 # ----------------------------------------------------------------------
@@ -343,17 +391,17 @@ for Y in range(12, 16):
 
 A = "glnxa64"
 E = "zip"
-for V, U in RELEASE_UPDATE_MAP.items():
-    INSTALLERS[A][V] = TEMPLATE2.format(version=V, update=U, arch=A, ext=E)
+for R, U in RELEASE_TO_UPDATE.items():
+    INSTALLERS[A][R] = TEMPLATE2.format(release=R, update=U, arch=A, ext=E)
 
 for Y in range(12, 19):
     for R in ("a", "b"):
-        V = f"R20{Y}{R}"
-        INSTALLERS[A][V] = TEMPLATE1.format(version=V, arch=A, ext=E)
+        R = f"R20{Y}{R}"
+        INSTALLERS[A][R] = TEMPLATE1.format(release=R, arch=A, ext=E)
 
 A = "glnx86"
 E = "zip"
-INSTALLERS[A]["R2012a"] = TEMPLATE1.format(version=V, arch=A, ext=E)
+INSTALLERS[A]["R2012a"] = TEMPLATE1.format(release=R, arch=A, ext=E)
 
 
 # ----------------------------------------------------------------------
@@ -363,16 +411,16 @@ INSTALLERS[A]["R2012a"] = TEMPLATE1.format(version=V, arch=A, ext=E)
 
 A = "maci64"
 E = "zip"
-for V, U in RELEASE_UPDATE_MAP.items():
-    INSTALLERS[A][V] = TEMPLATE2.format(version=V, update=U, arch=A, ext=E)
+for R, U in RELEASE_TO_UPDATE.items():
+    INSTALLERS[A][R] = TEMPLATE2.format(release=R, update=U, arch=A, ext=E)
 
 for Y in range(12, 19):
     for R in ("a", "b"):
-        V = f"R20{Y}{R}"
-        INSTALLERS[A][V] = TEMPLATE1.format(version=V, arch=A, ext=E)
+        R = f"R20{Y}{R}"
+        INSTALLERS[A][R] = TEMPLATE1.format(release=R, arch=A, ext=E)
 
 A = "maca64"
 E = "zip"
-for V in ("R2023b", "R2024a", "R2024b"):
-    U = RELEASE_UPDATE_MAP[V]
-    INSTALLERS[A][V] = TEMPLATE2.format(version=V, update=U, arch=A, ext=E)
+for R in ("R2023b", "R2024a", "R2024b"):
+    U = RELEASE_TO_UPDATE[R]
+    INSTALLERS[A][R] = TEMPLATE2.format(release=R, update=U, arch=A, ext=E)
