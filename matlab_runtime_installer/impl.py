@@ -1,3 +1,12 @@
+__all__ = [
+    "install",
+    "uninstall",
+    "init_sdk",
+    "import_deployed",
+    "init_runtime",
+    "terminate_runtime",
+    "guess_prefix",
+]
 import atexit
 import importlib
 import os
@@ -41,11 +50,6 @@ def install(version=None, prefix=None, auto_answer=False):
         Default answer to all questions.
         **This entails accepting the MATLAB Runtime license agreement.**
 
-    Returns
-    -------
-    prefix : [list of] str
-        Installation prefix
-
     Raises
     ------
     UserInterruptionError
@@ -53,9 +57,8 @@ def install(version=None, prefix=None, auto_answer=False):
     """
     # --- iterate if multiple versions  --------------------------------
     if isinstance(version, (list, tuple, set)):
-        return type(version)(
-            map(lambda x: install(x, prefix, auto_answer), version)
-        )
+        map(lambda x: install(x, prefix, auto_answer), version)
+        return
 
     # --- prepare  -----------------------------------------------------
     license = "matlabruntime_license_agreement.pdf"
@@ -73,7 +76,7 @@ def install(version=None, prefix=None, auto_answer=False):
         ok = askuser("Runtime already exists. Reinstall?", "no", auto_answer)
         if not ok:
             print("Do not reinstall:", op.join(prefix, version))
-            return prefix
+            return
         print("Runtime already exists. Reinstalling...")
 
     # --- download -----------------------------------------------------
@@ -138,7 +141,7 @@ def install(version=None, prefix=None, auto_answer=False):
         print("License agreement available at:", license)
 
     # --- all done! ----------------------------------------------------
-    return prefix
+    return
 
 
 def uninstall(version=None, prefix=None, auto_answer=False):
@@ -157,11 +160,6 @@ def uninstall(version=None, prefix=None, auto_answer=False):
         * MacOS:    /Applications/MATLAB/MATLAB_Runtime
     auto_answer : bool
         Default answer to all questions.
-
-    Raises
-    ------
-    UserInterruptionError
-        If the user answers no to a question.
     """
     # --- iterate if multiple versions  --------------------------------
     if isinstance(version, (list, tuple, set)):
@@ -209,7 +207,10 @@ def uninstall(version=None, prefix=None, auto_answer=False):
 
 
 _DEPLOYED_MODULES = {}
-_INITIALIZED = {}
+_INITIALIZED = {"SDK": False, "RUNTIME": False}
+_CPP = "matlabruntimeforpython_abi3"
+_SDK = "matlab_pysdk.runtime"
+_MLB = "matlab"
 
 
 def init_sdk(
@@ -239,7 +240,7 @@ def init_sdk(
         Default answer to all questions.
         **This entails accepting the MATLAB Runtime license agreement.**
     """
-    if _INITIALIZED.get("SDK", False):
+    if _INITIALIZED["SDK"]:
         raise ValueError("MATLAB SDK already initialized")
 
     # --- prepare  -----------------------------------------------------
@@ -284,9 +285,9 @@ def init_sdk(
     sys.path.insert(0, ext)
 
     # --- imports  -----------------------------------------------------
-    importlib.import_module("matlabruntimeforpython_abi3")
-    importlib.import_module('matlab_pysdk.runtime')
-    matlab = importlib.import_module('matlab')
+    importlib.import_module(_CPP)
+    importlib.import_module(_SDK)
+    matlab = importlib.import_module(_MLB)
 
     # --- check version  -----------------------------------------------
     current_version = guess_pymatlab_version(matlab)
@@ -303,6 +304,13 @@ def init_sdk(
     _INITIALIZED["SDK"] = True
 
 
+class _PathInitializer:
+    def __init__(self):
+        if not _INITIALIZED["SDK"]:
+            init_sdk()
+        self.cppext_handle = importlib.import_module(_CPP)
+
+
 def import_deployed(*packages):
     """
     Initialize compiled MATLAB packages so that they can be used from python.
@@ -317,10 +325,10 @@ def import_deployed(*packages):
     *modules : module
         Imported MATLAB modules.
     """
-    if not _INITIALIZED.get("RUNTIME", False):
+    if not _INITIALIZED["RUNTIME"]:
         init_runtime()
 
-    sdk = importlib.import_module('matlab_pysdk.runtime')
+    sdk = importlib.import_module(_SDK)
 
     handles = []
     for package in packages:
@@ -329,7 +337,7 @@ def import_deployed(*packages):
         handle = _DEPLOYED_MODULES.get(package, lambda: None)()
         if handle is None:
             handle = sdk.DeployablePackage(
-                package, package.__name__, package.__file__
+                _PathInitializer(), package.__name__, package.__file__
             )
             handle.initialize()
             _DEPLOYED_MODULES[package] = weakref.ref(handle)
@@ -346,16 +354,13 @@ def init_runtime(option_list=tuple()):
     ----------
     option_list : list[str]
         Options passed to MATLAB.
-    cppext : module, optional
-        MATLAB cpp extension module (`matlabruntimeforpython_abi3`).
-        Reimported if not provided.
     """
     if _INITIALIZED.get("RUNTIME", False):
         raise ValueError("MATLAB runtime already initialized")
     if not _INITIALIZED.get("SDK", False):
         init_sdk()
 
-    cppext = importlib.import_module("matlabruntimeforpython_abi3")
+    cppext = importlib.import_module(_CPP)
 
     arch = guess_arch()
     if arch[:3] == "mac":
@@ -377,7 +382,7 @@ def terminate_runtime():
     """
     Terminate runtime.
     """
-    if _INITIALIZED.get("RUNTIME", False):
+    if _INITIALIZED["RUNTIME"]:
         cppext = importlib.import_module("matlabruntimeforpython_abi3")
         cppext.terminateApplication()
         _INITIALIZED["RUNTIME"] = False
@@ -385,8 +390,7 @@ def terminate_runtime():
 
 @atexit.register
 def __atexit():
-    for key, package in _DEPLOYED_MODULES.items():
+    for package in _DEPLOYED_MODULES.values():
         if package() is not None:
             package().terminate()
-        del _DEPLOYED_MODULES[key]
     terminate_runtime()

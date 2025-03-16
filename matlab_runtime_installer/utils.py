@@ -169,7 +169,22 @@ def macos_version():
 
 
 def guess_prefix():
-    if "MATLAB_RUNTIME_PATH" in os.environ:
+    """
+    Guess the MATLAB Runtime installation prefix.
+
+    If the environment variable `"MATLAB_RUNTIME_PATH"` is set, return it.
+
+    Otherwise, the default prefix is platform-specific:
+
+    * Windows:  C:\\Program Files\\MATLAB\\MATLAB Runtime\\
+    * Linux:    /usr/local/MATLAB/MATLAB_Runtime
+    * MacOS:    /Applications/MATLAB/MATLAB_Runtime
+
+    Returns
+    -------
+    prefix : str
+    """
+    if os.environ.get("MATLAB_RUNTIME_PATH", ""):
         return os.environ["MATLAB_RUNTIME_PATH"]
     arch = guess_arch()
     if arch[:3] == "win":
