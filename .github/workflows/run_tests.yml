@@ -2,12 +2,12 @@ name: Unit tests
 on:
   workflow_dispatch:
   workflow_call:
-  # push:
-  #   paths:
-  #     - tests/**
-  #     - matlab_runtime_installer/**
-  #     - setup.py
-  #     - pyproject.toml
+  push:
+    paths:
+      - tests/**
+      - matlab_runtime_installer/**
+      - setup.py
+      - pyproject.toml
   # pull_request:
 
 jobs:
