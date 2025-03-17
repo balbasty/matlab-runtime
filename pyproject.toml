@@ -15,6 +15,9 @@ requires-python = ">=3"
 dependencies = []
 dynamic = ["version"]
 
+[project.optional-dependencies]
+test = ["pytest"]
+
 [project.urls]
 Homepage = "https://github.com/balbasty/matlab-runtime-installer"
 Issues = "https://github.com/balbasty/matlab-runtime-installer/issues"
