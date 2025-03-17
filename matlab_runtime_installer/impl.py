@@ -105,8 +105,8 @@ def install(version=None, prefix=None, auto_answer=False):
             print("done ->", installer)
 
         if not op.exists(installer):
-            raise FileNotFoundError("No installer found in archive:",
-                                    os.listdir(tmpdir))
+            print("No installer found in archive:", os.listdir(tmpdir))
+            raise FileNotFoundError("No installer found in archive")
 
         # --- install --------------------------------------------------
 
@@ -141,12 +141,14 @@ def install(version=None, prefix=None, auto_answer=False):
             print("done ->", op.join(prefix, version))
 
         # --- check ----------------------------------------------------
-        if not op.exists(op.join(prefix, version, license)):
-            if op.exists(op.join(prefix, version)):
-                raise RuntimeError("Runtime not found where it is expected.",
-                                   os.listdir(op.join(prefix, version)))
-            else:
-                raise RuntimeError("Runtime not found where it is expected.")
+        path_installed = op.join(prefix, version)
+        if not op.exists(op.join(path_installed, license)):
+            if op.exists(path_installed):
+                print(
+                    "Runtime not found where it is expected:",
+                    os.listdir(path_installed)
+                )
+            raise FileNotFoundError("Runtime not found where it is expected.")
 
         license = op.join(prefix, version, license)
         print("Runtime succesfully installed at:", op.join(prefix, version))
