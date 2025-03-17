@@ -301,8 +301,8 @@ def guess_installer(version, arch=None):
     if version in INSTALLERS[arch]:
         return INSTALLERS[arch][version]
     else:
-        A, V, E = arch, version, "zip"
-        fmt = dict(version=V, arch=A, ext=E)
+        A, R, E = arch, version, "zip"
+        fmt = dict(release=R, arch=A, ext=E)
         for U in reversed(range(11)):
             maybe_installer = TEMPLATE2.format(update=U, **fmt)
             if url_exists(maybe_installer):
