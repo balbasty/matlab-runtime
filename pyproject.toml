@@ -21,6 +21,7 @@ Issues = "https://github.com/balbasty/matlab-runtime-installer/issues"
 
 [project.scripts]
 install_matlab_runtime = "matlab_runtime_installer.cli:main"
+mwpython2 = "matlab_runtime_installer.cli:mwpython2"
 
 [build-system]
 requires = [

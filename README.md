@@ -8,8 +8,18 @@ pip install matlab-runtime-installer @ https://github.com/balbasty/matlab-runtim
 
 ## Command line tool
 
-```shell
-install_matlab_runtime [--version VERSION] [--prefix PREFIX] [--uninstall] [--yes]
+```text
+usage: install_matlab_runtime [-h] [-v VERSION ...] [-p PREFIX] [-u] [-y]
+
+Install any matlab runtime in any location.
+
+options:
+  -h, --help            show this help message and exit
+  -v, --version         Version of the runtime to [un]install, such as 'latest' or 'R2022b' or '9.13'.
+                        Default is 'all' if '--uninstall' else 'latest'.
+  -p, --prefix          Installation prefix. Default: '/Applications/MATLAB/MATLAB_Runtime'.
+  -u, --uninstall       Uninstall this version of the runtime. Use '--version all' to uninstall all versions.
+  -y, --yes             Default answer (usually yes) to all questions, **including MATLAB license agreement**.
 ```
 
 ## Python API
@@ -134,3 +144,21 @@ def import_deployed(*packages):
     """
     ...
 ```
+
+## Troubleshooting
+
+### MacOS
+
+The MATLAB SDK cannot be used with the normal python interpreter in MacOS.
+Instead, the MATLAB runtime ships with its own interpreter called `mwpython`.
+
+However, `mwpython` does not interface correctly with conda environments
+(it overrides environement variables that cause compiled libraries
+to not be correctly loaded). For example, importing `scipy.sparse` in
+`mwpython` leads to crashing.
+
+Instead, we provide our own wrapper, `mwpython2`, which is automatically
+installed with this package. It does solve the conda environement issue.
+
+That said, the `matplotlib` package still cannot be used with this wrapper
+(not can it be used with `mwpython`).

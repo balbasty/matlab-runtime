@@ -255,10 +255,21 @@ def matlab_version(version):
     return year + "." + str("abcdefghijklmnopqrstuvwxy".index(letter) + 1)
 
 
-def guess_release(version, arch=None):
+def guess_release(version, arch=None, prefix=None):
     """Guess version (if "latest") + convert to MATLAB release (e.g. R2024b)"""
     arch = arch or guess_arch()
-    if version.lower() == "latest":
+    if version.lower() == "latest_installed":
+
+        license = "matlabruntime_license_agreement.pdf"
+        if prefix is None:
+            prefix = guess_prefix()
+        for name in sorted(os.listdir(prefix), reverse=True):
+            if op.exists(op.join(prefix, name, license)):
+                return matlab_release(name)
+            return guess_release("latest", arch)
+
+    elif version.lower() == "latest":
+
         year = str(datetime.now().year)
         for letter in ("b", "a"):
             maybe_version = "R" + year + letter
@@ -273,6 +284,7 @@ def guess_release(version, arch=None):
             version = next(iter(
                 sorted(INSTALLERS[arch].keys(), reverse=True)
             ))
+
     return matlab_release(version)
 
 
@@ -343,6 +355,29 @@ RELEASE_TO_UPDATE = {
     "R2020a": "8",
     "R2019b": "9",
     "R2019a": "9",
+}
+
+SUPPORTED_PYTHON_VERSIONS = {
+    "R2024b": ("3.9", "3.10", "3.11", "3.12"),
+    "R2024a": ("3.9", "3.10", "3.11"),
+    "R2023b": ("3.9", "3.10", "3.11"),
+    "R2023a": ("3.8", "3.9", "3.10"),
+    "R2022b": ("2.7", "3.8", "3.9", "3.10"),
+    "R2022a": ("2.7", "3.8", "3.9"),
+    "R2021b": ("2.7", "3.7", "3.8", "3.9"),
+    "R2021a": ("2.7", "3.7", "3.8"),
+    "R2020b": ("2.7", "3.6", "3.7", "3.8"),
+    "R2020a": ("2.7", "3.6", "3.7"),
+    "R2019b": ("2.7", "3.6", "3.7"),
+    "R2019a": ("2.7", "3.5", "3.6", "3.7"),
+    "R2018b": ("2.7", "3.5", "3.6"),
+    "R2018a": ("2.7", "3.5", "3.6"),
+    "R2017b": ("2.7", "3.4", "3.5", "3.6"),
+    "R2017a": ("2.7", "3.4", "3.5"),
+    "R2016b": ("2.7", "3.3", "3.4", "3.5"),
+    "R2016a": ("2.7", "3.3", "3.4"),
+    "R2015b": (),
+    "R2015a": ("2.7", "3.3", "3.4"),
 }
 
 INSTALLERS = {

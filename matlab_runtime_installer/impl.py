@@ -251,11 +251,6 @@ def init_sdk(
         prefix = guess_prefix()
 
     # --- find version  ------------------------------------------------
-    if version == "latest_installed":
-        for name in sorted(os.listdir(prefix), reverse=True):
-            if op.exists(op.join(prefix, name, license)):
-                version = name
-                break
     version = guess_release(version, arch)
 
     # --- install version  ---------------------------------------------
