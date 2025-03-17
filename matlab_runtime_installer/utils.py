@@ -259,14 +259,14 @@ def guess_release(version, arch=None, prefix=None):
     """Guess version (if "latest") + convert to MATLAB release (e.g. R2024b)"""
     arch = arch or guess_arch()
     if version.lower() == "latest_installed":
-
-        license = "matlabruntime_license_agreement.pdf"
         if prefix is None:
             prefix = guess_prefix()
-        for name in sorted(os.listdir(prefix), reverse=True):
-            if op.exists(op.join(prefix, name, license)):
-                return matlab_release(name)
-            return guess_release("latest", arch)
+        if op.exists(prefix):
+            license = "matlabruntime_license_agreement.pdf"
+            for name in sorted(os.listdir(prefix), reverse=True):
+                if op.exists(op.join(prefix, name, license)):
+                    return matlab_release(name)
+        return guess_release("latest", arch)
 
     elif version.lower() == "latest":
 
@@ -439,7 +439,7 @@ for Y in range(12, 16):
 # ----------------------------------------------------------------------
 
 
-A = "glnxa64"
+A = "glnx64"
 E = "zip"
 for R, U in RELEASE_TO_UPDATE.items():
     INSTALLERS[A][R] = TEMPLATE2.format(release=R, update=U, arch=A, ext=E)
