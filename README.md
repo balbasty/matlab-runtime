@@ -149,16 +149,16 @@ def import_deployed(*packages):
 
 ### MacOS
 
-The MATLAB SDK cannot be used with the normal python interpreter in MacOS.
+The MATLAB SDK cannot be used with the normal python interpreter on MacOS.
 Instead, the MATLAB runtime ships with its own interpreter called `mwpython`.
 
 However, `mwpython` does not interface correctly with conda environments
 (it overrides environement variables that cause compiled libraries
-to not be correctly loaded). For example, importing `scipy.sparse` in
-`mwpython` leads to crashing.
+to not be correctly loaded). For example, `mwpython` crashes when
+importing `scipy.sparse`.
 
 Instead, we provide our own wrapper, `mwpython2`, which is automatically
 installed with this package. It does solve the conda environement issue.
 
 That said, the `matplotlib` package still cannot be used with this wrapper
-(not can it be used with `mwpython`).
+(nor can it be used with `mwpython`).
