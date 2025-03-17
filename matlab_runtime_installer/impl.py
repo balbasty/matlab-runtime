@@ -93,6 +93,7 @@ def install(version=None, prefix=None, auto_answer=False):
         if installer.endswith(".zip"):
 
             askuser(f"Unzip {installer}?", "yes", auto_answer, raise_if_no)
+            print(f"Unzipping {installer} ...")
 
             with ZipFileWithExecPerm(installer) as zip:
                 zip.extractall(tmpdir)
@@ -101,9 +102,11 @@ def install(version=None, prefix=None, auto_answer=False):
                 installer = op.join(tmpdir, "setup.exe")
             else:
                 installer = op.join(tmpdir, "install")
+            print("done ->", installer)
 
         if not op.exists(installer):
-            raise FileNotFoundError("No installer found in archive")
+            raise FileNotFoundError("No installer found in archive:",
+                                    os.listdir(tmpdir))
 
         # --- install --------------------------------------------------
 
@@ -124,17 +127,26 @@ def install(version=None, prefix=None, auto_answer=False):
                 "sudo", "xattr", "-r", "-d", "com.apple.quarantine", tmpdir
             ])
 
-        subprocess.call([
+        print("Installing ...")
+        ret = subprocess.call([
             installer,
             "-destinationFolder", prefix,
             "-tmpdir", tmpdir,
             "-mode", "silent",
             "-agreeToLicense", "yes"
         ])
+        if ret:
+            print("Installation failed?")
+        else:
+            print("done ->", op.join(prefix, version))
 
         # --- check ----------------------------------------------------
         if not op.exists(op.join(prefix, version, license)):
-            raise RuntimeError("Runtime not found where it is expected.")
+            if op.exists(op.join(prefix, version)):
+                raise RuntimeError("Runtime not found where it is expected.",
+                                   os.listdir(op.join(prefix, version)))
+            else:
+                raise RuntimeError("Runtime not found where it is expected.")
 
         license = op.join(prefix, version, license)
         print("Runtime succesfully installed at:", op.join(prefix, version))

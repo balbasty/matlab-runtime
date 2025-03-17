@@ -48,6 +48,8 @@ jobs:
       - name: Install
         run: python -m pip install ".[test]"
 
-      - name: Run tests
-        run: |
-           ${{ matrix.python-bin }} -m pytest
+      - name: Run installation tests
+        run: python -m pytest tests/test_install.py
+
+      - name: Run other tests
+        run: ${{ matrix.python-bin }} -m pytest
