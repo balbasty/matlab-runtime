@@ -383,7 +383,7 @@ SUPPORTED_PYTHON_VERSIONS = {
 INSTALLERS = {
     "win64": {},        # Windows 64 bits
     "win32": {},        # Windows 32 bits
-    "glnxa64": {},      # Linux 64 bits
+    "glnx64": {},       # Linux 64 bits
     "glnx86": {},       # Linux 32 bits
     "maci64": {},       # Mac Intel 64 bits
     "maca64": {},       # Mac ARM 64  bits
