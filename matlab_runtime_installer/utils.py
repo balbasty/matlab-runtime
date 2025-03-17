@@ -306,7 +306,7 @@ def guess_installer(version, arch=None):
         for U in reversed(range(11)):
             maybe_installer = TEMPLATE2.format(update=U, **fmt)
             if url_exists(maybe_installer):
-                INSTALLERS[A][V] = maybe_installer
+                INSTALLERS[A][R] = maybe_installer
                 return maybe_installer
         raise error
 
