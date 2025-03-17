@@ -153,11 +153,16 @@ def guess_arch():
         else:
             arch += "i"
         arch += "64"
-    else:
+    elif arch == "win":
         if sys.maxsize > 2**32:
             arch += "64"
         else:
             arch += "32"
+    elif arch == "glnx":
+        if sys.maxsize > 2**32:
+            arch += "a64"
+        else:
+            arch += "86"
 
     return arch
 
@@ -383,7 +388,7 @@ SUPPORTED_PYTHON_VERSIONS = {
 INSTALLERS = {
     "win64": {},        # Windows 64 bits
     "win32": {},        # Windows 32 bits
-    "glnx64": {},       # Linux 64 bits
+    "glnxa64": {},      # Linux 64 bits
     "glnx86": {},       # Linux 32 bits
     "maci64": {},       # Mac Intel 64 bits
     "maca64": {},       # Mac ARM 64  bits
@@ -439,7 +444,7 @@ for Y in range(12, 16):
 # ----------------------------------------------------------------------
 
 
-A = "glnx64"
+A = "glnxa64"
 E = "zip"
 for R, U in RELEASE_TO_UPDATE.items():
     INSTALLERS[A][R] = TEMPLATE2.format(release=R, update=U, arch=A, ext=E)
