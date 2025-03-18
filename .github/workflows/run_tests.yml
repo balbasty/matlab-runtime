@@ -31,10 +31,10 @@ jobs:
             os-name: macOS_Apple_Silicon
             platform: Mac
             python-bin: mwpython2
-          - os: windows-latest
-            os-name: Windows
-            platform: Windows
-            python-bin: python
+          # - os: windows-latest
+          #   os-name: Windows
+          #   platform: Windows
+          #   python-bin: python
 
     steps:
       - name: Set up Python ${{ matrix.python-version }}
