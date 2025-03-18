@@ -129,9 +129,9 @@ def install(version=None, prefix=None, auto_answer=False):
 
         print("Installing ...")
         ret = subprocess.call([
-            installer,
-            "-destinationFolder", prefix,
-            "-tmpdir", tmpdir,
+            op.abspath(installer),
+            "-destinationFolder", op.abspath(prefix),
+            "-tmpdir", op.abspath(tmpdir),
             "-mode", "silent",
             "-agreeToLicense", "yes"
         ])
@@ -145,8 +145,13 @@ def install(version=None, prefix=None, auto_answer=False):
         if not op.exists(op.join(path_installed, license)):
             if op.exists(path_installed):
                 print(
-                    "Runtime not found where it is expected:",
+                    "Runtime not found where it is expected (v):",
                     os.listdir(path_installed)
+                )
+            elif op.exists(prefix):
+                print(
+                    "Runtime not found where it is expected (p):",
+                    os.listdir(prefix)
                 )
             raise FileNotFoundError("Runtime not found where it is expected.")
 

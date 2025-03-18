@@ -118,17 +118,23 @@ def url_exists(url):
         return False
 
 
-def url_download(url, out):
+def url_download(url, out, retry=5):
     if op.isdir(out):
         basename = op.basename(parse.urlparse(url).path)
         out = op.join(out, basename)
-    req = request.Request(url, method="GET")
-    with request.urlopen(req) as res:
-        if res.status >= 400:
-            raise DownloadError(f"[{res.status}] Failed to download", url)
-        with open(out, "wb") as f:
-            f.write(res.read())
-    return out
+
+    res = exc = None
+    for _ in range(retry):
+        try:
+            request.urlretrieve(url, out)
+            break
+        except Exception as e:
+            exc = e
+
+    if res is None:
+        raise DownloadError(str(exc))
+
+    return res
 
 
 # ----------------------------------------------------------------------

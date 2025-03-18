@@ -161,7 +161,8 @@ def mwpython2(args=None):
     MCRROOT = op.dirname(exe_dir)
     DYLD_FALLBACK_LIBRARY_PATH = ENV.get("DYLD_FALLBACK_LIBRARY_PATH")
     if DYLD_FALLBACK_LIBRARY_PATH:
-        DYLD_FALLBACK_LIBRARY_PATH = DYLD_FALLBACK_LIBRARY_PATH.split(os.pathsep)
+        DYLD_FALLBACK_LIBRARY_PATH \
+            = DYLD_FALLBACK_LIBRARY_PATH.split(os.pathsep)
     else:
         DYLD_FALLBACK_LIBRARY_PATH = []
     DYLD_FALLBACK_LIBRARY_PATH = (
