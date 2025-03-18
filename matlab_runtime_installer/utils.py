@@ -67,6 +67,7 @@ class ZipFileWithExecPerm(zipfile.ZipFile):
             member = self.getinfo(member)
 
         targetpath = super()._extract_member(member, targetpath, pwd)
+
         attr = member.external_attr >> 16
 
         # https://bugs.python.org/issue27318
@@ -74,7 +75,7 @@ class ZipFileWithExecPerm(zipfile.ZipFile):
             link = self.open(member, pwd=pwd).read()
             shutil.move(targetpath, targetpath + ".__backup__")
             try:
-                os.symlink(link, targetpath)
+                return os.symlink(link, targetpath)
             except OSError:     # No permission to create symlink
                 shutil.move(targetpath + ".__backup__", targetpath)
                 pass
