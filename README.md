@@ -1,4 +1,16 @@
-# Cross-platform installer for the MATLAB runtime
+# Cross-platform installer for the MATLAB Runtime
+
+This is a small package that simply allows to
+
+* download and run the correct MATLAB Runtime installer for the current
+  platform, _i.e._, wraps the steps described in
+  [install-the-matlab-runtime](https://mathworks.com/help/compiler/install-the-matlab-runtime.html);
+* correctly set the environement variables for deployment, _i.e._, wraps
+  the steps described in
+  [mcr-path-settings-for-run-time-deployment](https://uk.mathworks.com/help/compiler/mcr-path-settings-for-run-time-deployment.html);
+* use the MATLAB SDK to import a compiled MATLAB package in Python, _i.e._,
+  wraps the steps described in
+  [import-compiled-python-packages](https://uk.mathworks.com/help/compiler_sdk/python/import-compiled-python-packages.html).
 
 ## Installation
 
@@ -14,12 +26,27 @@ usage: install_matlab_runtime [-h] [-v VERSION ...] [-p PREFIX] [-u] [-y]
 Install any matlab runtime in any location.
 
 options:
-  -h, --help            show this help message and exit
-  -v, --version         Version of the runtime to [un]install, such as 'latest' or 'R2022b' or '9.13'.
-                        Default is 'all' if '--uninstall' else 'latest'.
-  -p, --prefix          Installation prefix. Default: '/Applications/MATLAB/MATLAB_Runtime'.
-  -u, --uninstall       Uninstall this version of the runtime. Use '--version all' to uninstall all versions.
-  -y, --yes             Default answer (usually yes) to all questions, **including MATLAB license agreement**.
+
+  -h, --help        Show this help message and exit
+
+  -v, --version     Version of the runtime to [un]install,
+                    such as 'latest' or 'R2022b' or '9.13'.
+                    Default is 'all' if '--uninstall' else 'latest'.
+
+  -p, --prefix      Installation prefix. Default:
+                    * Windows:  C:\Program Files\MATLAB\MATLAB Runtime\
+                    * Linux:    /usr/local/MATLAB/MATLAB_Runtime
+                    * MacOS:    /Applications/MATLAB/MATLAB_Runtime
+
+  -u, --uninstall   Uninstall this version of the runtime.
+                    Use '--version all' to uninstall all versions.
+
+  -y, --yes         Default answer (usually yes) to all questions.
+                    BY USING THIS OPTION, YOU ACCEPT THE TERMS OF THE MATLAB
+                    RUNTIME LICENSE. THE MATLAB RUNTIME INSTALLER WILL BE RUN
+                    WITH THE ARGUMENT `-agreeToLicense yes`.
+                    IF YOU ARE NOT WILLING TO DO SO, DO NOT CALL THIS FUNCTION.
+                    https://mathworks.com/help/compiler/install-the-matlab-runtime.html
 ```
 
 ## Python API
@@ -59,6 +86,14 @@ def guess_prefix():
 def install(version=None, prefix=None, auto_answer=False):
     """
     Install the matlab runtime.
+
+    !!! warning
+        BY SETTING `default_answer=True`, YOU ACCEPT THE TERMS OF THE
+        MATLAB RUNTIME LICENSE. THE MATLAB RUNTIME INSTALLER WILL BE
+        RUN WITH THE ARGUMENT `-agreeToLicense yes`.
+        IF YOU ARE NOT WILLING TO DO SO, DO NOT CALL THIS FUNCTION.
+
+        https://mathworks.com/help/compiler/install-the-matlab-runtime.html
 
     Parameters
     ----------

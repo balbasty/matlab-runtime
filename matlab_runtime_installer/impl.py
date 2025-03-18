@@ -38,6 +38,14 @@ def install(version=None, prefix=None, auto_answer=False):
     """
     Install the matlab runtime.
 
+    !!! warning
+        BY SETTING `default_answer=True`, YOU ACCEPT THE TERMS OF THE
+        MATLAB RUNTIME LICENSE. THE MATLAB RUNTIME INSTALLER WILL BE
+        RUN WITH THE ARGUMENT `-agreeToLicense yes`.
+        IF YOU ARE NOT WILLING TO DO SO, DO NOT CALL THIS FUNCTION.
+
+        https://mathworks.com/help/compiler/install-the-matlab-runtime.html
+
     Parameters
     ----------
     version : [list of] str, default="latest"
@@ -49,7 +57,6 @@ def install(version=None, prefix=None, auto_answer=False):
         * MacOS:    /Applications/MATLAB/MATLAB_Runtime
     default_answer : bool
         Default answer to all questions.
-        **This entails accepting the MATLAB Runtime license agreement.**
 
     Raises
     ------
@@ -114,8 +121,11 @@ def install(version=None, prefix=None, auto_answer=False):
         # --- install --------------------------------------------------
 
         question = (
-            "By running this code, you agree to the MATLAB Runtime "
-            "license agreement:\n"
+            "BY ENTERING 'YES', YOU ACCEPT THE TERMS OF THE MATLAB RUNTIME "
+            "LICENSE, LINKED BELOW. THE MATLAB RUNTIME INSTALLER WILL BE "
+            "RUN WITH THE ARGUMENT `-agreeToLicense yes`. "
+            "IF YOU ARE NOT WILLING TO DO SO, ENTER 'NO' AND THE "
+            "INSTALLATION WILL BE ABORTED."
             f"\t{op.join(tmpdir, 'matlabruntime_license_agreement.pdf')}\n"
         )
         askuser(question, "yes", auto_answer, raise_if_no)
