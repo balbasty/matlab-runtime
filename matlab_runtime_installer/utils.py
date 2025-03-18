@@ -126,7 +126,7 @@ def url_download(url, out, retry=5):
     res = exc = None
     for _ in range(retry):
         try:
-            request.urlretrieve(url, out)
+            res = request.urlretrieve(url, out)
             break
         except Exception as e:
             exc = e
@@ -134,7 +134,7 @@ def url_download(url, out, retry=5):
     if res is None:
         raise DownloadError(str(exc))
 
-    return res
+    return out
 
 
 # ----------------------------------------------------------------------
