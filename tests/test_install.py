@@ -1,10 +1,14 @@
 import os.path as op
 from tempfile import gettempdir
 
-from matlab_runtime_installer import install
+from matlab_runtime_installer import install, guess_arch, guess_prefix
 
-# Use an installation prefix that does not require root access
-tmp_prefix = op.join(gettempdir(), "MATLAB", "MATLAB_Runtime")
+if guess_arch()[:3] == "mac":
+    # Use defualt prefix so that we can easily call mwpython2 later
+    tmp_prefix = guess_prefix()
+else:
+    # Use an installation prefix that does not require root access
+    tmp_prefix = op.join(gettempdir(), "MATLAB", "MATLAB_Runtime")
 
 
 def test_install_r2024b():

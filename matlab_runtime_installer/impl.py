@@ -6,6 +6,7 @@ __all__ = [
     "init_runtime",
     "terminate_runtime",
     "guess_prefix",
+    "guess_arch",
 ]
 import atexit
 import importlib
@@ -69,6 +70,7 @@ def install(version=None, prefix=None, auto_answer=False):
 
     if prefix is None:
         prefix = guess_prefix()
+    prefix = op.realpath(op.abspath(prefix))
 
     # --- check already exists -----------------------------------------
     if op.exists(op.join(prefix, version, license)):
@@ -84,6 +86,7 @@ def install(version=None, prefix=None, auto_answer=False):
     askuser(f"Download installer from {url}?", "yes", auto_answer, raise_if_no)
 
     with tempfile.TemporaryDirectory() as tmpdir:
+        tmpdir = op.realpath(op.abspath(tmpdir))
 
         print(f"Downloading from {url} ...")
         installer = url_download(url, tmpdir)
@@ -129,11 +132,11 @@ def install(version=None, prefix=None, auto_answer=False):
 
         print("Installing ...")
         ret = subprocess.call([
-            op.abspath(installer),
-            "-destinationFolder", op.abspath(prefix),
-            "-tmpdir", op.abspath(tmpdir),
-            "-mode", "silent",
+            installer,
             "-agreeToLicense", "yes"
+            "-destinationFolder", prefix,
+            "-tmpdir", tmpdir,
+            "-mode", "silent",
         ])
         if ret:
             print("Installation failed?")
