@@ -158,6 +158,12 @@ def install(version=None, prefix=None, auto_answer=False):
                     "Runtime not found where it is expected (l):",
                     os.listdir("/usr/local")
                 )
+            elif arch[:3] == "win":
+                print(
+                    "Runtime not found where it is expected (w):",
+                    os.listdir("C:\\Program Files\\")
+                )
+
             raise FileNotFoundError("Runtime not found where it is expected.")
 
         license = op.join(prefix, version, license)
