@@ -60,7 +60,6 @@ def askuser(question, default="yes", auto_answer=False, raise_if_no=False):
 
 
 class ZipFileWithExecPerm(zipfile.ZipFile):
-    # https://stackoverflow.com/questions/39296101
 
     def _extract_member(self, member, targetpath, pwd):
         if not isinstance(member, zipfile.ZipInfo):
@@ -84,8 +83,10 @@ class ZipFileWithExecPerm(zipfile.ZipFile):
                 shutil.move(targetpath + ".__backup__", targetpath)
                 pass
 
+        # https://stackoverflow.com/questions/39296101
         if attr != 0:
             os.chmod(targetpath, attr)
+
         return targetpath
 
 
