@@ -130,7 +130,6 @@ def install(version=None, prefix=None, auto_answer=False):
                 "sudo", "xattr", "-r", "-d", "com.apple.quarantine", tmpdir
             ])
 
-        print("Installing ...")
         call = [
             installer,
             "-agreeToLicense", "yes",
@@ -138,7 +137,7 @@ def install(version=None, prefix=None, auto_answer=False):
             "-destinationFolder", prefix,
             "-tmpdir", tmpdir,
         ]
-        print("Running:", call)
+        print("Installing", call, "...")
         ret = subprocess.call(call)
         if ret:
             print("Installation failed?")
@@ -158,17 +157,6 @@ def install(version=None, prefix=None, auto_answer=False):
                     "Runtime not found where it is expected (p):",
                     os.listdir(prefix)
                 )
-            elif arch[:4] == "glnx":
-                print(
-                    "Runtime not found where it is expected (l):",
-                    os.listdir("/usr/local")
-                )
-            elif arch[:3] == "win":
-                print(
-                    "Runtime not found where it is expected (w):",
-                    os.listdir("C:\\Program Files\\")
-                )
-
             raise FileNotFoundError("Runtime not found where it is expected.")
 
         license = op.join(prefix, version, license)
