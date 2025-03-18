@@ -67,25 +67,14 @@ class ZipFileWithExecPerm(zipfile.ZipFile):
             member = self.getinfo(member)
 
         targetpath = super()._extract_member(member, targetpath, pwd)
-        targetpath = op.realpath(targetpath)
-
-        if stat.S_ISLNK(member.external_attr >> 16) and hasattr(os, "symlink"):
-            link = op.realpath(self.open(member, pwd=pwd).read())
-            try:
-                os.symlink(link, targetpath)
-                return targetpath
-            except OSError:     # No permission to create symlink
-                pass
-
         attr = member.external_attr >> 16
 
         # https://bugs.python.org/issue27318
         if stat.S_ISLNK(attr) and hasattr(os, "symlink"):
-            link = op.realpath(self.open(member, pwd=pwd).read())
+            link = self.open(member, pwd=pwd).read()
             shutil.move(targetpath, targetpath + ".__backup__")
             try:
                 os.symlink(link, targetpath)
-                return targetpath
             except OSError:     # No permission to create symlink
                 shutil.move(targetpath + ".__backup__", targetpath)
                 pass
