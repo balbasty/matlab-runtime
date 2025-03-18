@@ -60,7 +60,6 @@ def askuser(question, default="yes", auto_answer=False, raise_if_no=False):
 
 
 class ZipFileWithExecPerm(zipfile.ZipFile):
-    # https://stackoverflow.com/questions/39296101
 
     def _extract_member(self, member, targetpath, pwd):
         if not isinstance(member, zipfile.ZipInfo):
@@ -68,30 +67,26 @@ class ZipFileWithExecPerm(zipfile.ZipFile):
 
         targetpath = super()._extract_member(member, targetpath, pwd)
 
-        if stat.S_ISLNK(member.external_attr >> 16) and \
-                hasattr(os, "symlink"):     # Symlink
-            link = self.open(member, pwd=pwd).read()
-            try:
-                os.symlink(link, targetpath)
-                return targetpath
-            except OSError:     # No permission to create symlink
-                pass
-
         attr = member.external_attr >> 16
 
         # https://bugs.python.org/issue27318
-        if stat.S_ISLNK(attr) and hasattr(os, "symlink"):
+        if (
+            platform.system() != "Windows" and
+            stat.S_ISLNK(attr) and
+            hasattr(os, "symlink")
+        ):
             link = self.open(member, pwd=pwd).read()
             shutil.move(targetpath, targetpath + ".__backup__")
             try:
-                os.symlink(link, targetpath)
-                return targetpath
+                return os.symlink(link, targetpath)
             except OSError:     # No permission to create symlink
                 shutil.move(targetpath + ".__backup__", targetpath)
                 pass
 
+        # https://stackoverflow.com/questions/39296101
         if attr != 0:
             os.chmod(targetpath, attr)
+
         return targetpath
 
 
@@ -118,16 +113,22 @@ def url_exists(url):
         return False
 
 
-def url_download(url, out):
+def url_download(url, out, retry=5):
     if op.isdir(out):
         basename = op.basename(parse.urlparse(url).path)
         out = op.join(out, basename)
-    req = request.Request(url, method="GET")
-    with request.urlopen(req) as res:
-        if res.status >= 400:
-            raise DownloadError(f"[{res.status}] Failed to download", url)
-        with open(out, "wb") as f:
-            f.write(res.read())
+
+    res = exc = None
+    for _ in range(retry):
+        try:
+            res = request.urlretrieve(url, out)
+            break
+        except Exception as e:
+            exc = e
+
+    if res is None:
+        raise DownloadError(str(exc))
+
     return out
 
 
@@ -153,11 +154,16 @@ def guess_arch():
         else:
             arch += "i"
         arch += "64"
-    else:
+    elif arch == "win":
         if sys.maxsize > 2**32:
             arch += "64"
         else:
             arch += "32"
+    elif arch == "glnx":
+        if sys.maxsize > 2**32:
+            arch += "a64"
+        else:
+            arch += "86"
 
     return arch
 
@@ -259,14 +265,14 @@ def guess_release(version, arch=None, prefix=None):
     """Guess version (if "latest") + convert to MATLAB release (e.g. R2024b)"""
     arch = arch or guess_arch()
     if version.lower() == "latest_installed":
-
-        license = "matlabruntime_license_agreement.pdf"
         if prefix is None:
             prefix = guess_prefix()
-        for name in sorted(os.listdir(prefix), reverse=True):
-            if op.exists(op.join(prefix, name, license)):
-                return matlab_release(name)
-            return guess_release("latest", arch)
+        if op.exists(prefix):
+            license = "matlabruntime_license_agreement.pdf"
+            for name in sorted(os.listdir(prefix), reverse=True):
+                if op.exists(op.join(prefix, name, license)):
+                    return matlab_release(name)
+        return guess_release("latest", arch)
 
     elif version.lower() == "latest":
 
@@ -296,12 +302,12 @@ def guess_installer(version, arch=None):
     if version in INSTALLERS[arch]:
         return INSTALLERS[arch][version]
     else:
-        A, V, E = arch, version, "zip"
-        fmt = dict(version=V, arch=A, ext=E)
+        A, R, E = arch, version, "zip"
+        fmt = dict(release=R, arch=A, ext=E)
         for U in reversed(range(11)):
             maybe_installer = TEMPLATE2.format(update=U, **fmt)
             if url_exists(maybe_installer):
-                INSTALLERS[A][V] = maybe_installer
+                INSTALLERS[A][R] = maybe_installer
                 return maybe_installer
         raise error
 

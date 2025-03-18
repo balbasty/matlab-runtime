@@ -24,11 +24,19 @@ def _make_parser():
     p.add_argument("--version", "-v", nargs="+", help=_)
     _ = f"Installation prefix. Default: '{guess_prefix()}'."
     p.add_argument("--prefix", "-p", help=_, default=guess_prefix())
-    _ = ("Uninstall this version of the runtime. "
-         "Use '--version all' to uninstall all versions.")
+    _ = (
+        "Uninstall this version of the runtime. "
+        "Use '--version all' to uninstall all versions."
+    )
     p.add_argument("--uninstall", "-u", action="store_true", help=_)
-    _ = ("Default answer (usually yes) to all questions, "
-         "**including MATLAB license agreement**.")
+    _ = (
+        "Default answer (usually yes) to all questions. "
+        "BY USING THIS OPTION, YOU ACCEPT THE TERMS OF THE MATLAB RUNTIME "
+        "LICENSE. THE MATLAB RUNTIME INSTALLER WILL BE RUN WITH THE "
+        "ARGUMENT `-agreeToLicense yes`. "
+        "IF YOU ARE NOT WILLING TO DO SO, DO NOT CALL THIS FUNCTION. "
+        "https://mathworks.com/help/compiler/install-the-matlab-runtime.html"
+    )
     p.add_argument("--yes", "-y", action="store_true", help=_)
     return p
 
@@ -161,7 +169,8 @@ def mwpython2(args=None):
     MCRROOT = op.dirname(exe_dir)
     DYLD_FALLBACK_LIBRARY_PATH = ENV.get("DYLD_FALLBACK_LIBRARY_PATH")
     if DYLD_FALLBACK_LIBRARY_PATH:
-        DYLD_FALLBACK_LIBRARY_PATH = DYLD_FALLBACK_LIBRARY_PATH.split(os.pathsep)
+        DYLD_FALLBACK_LIBRARY_PATH \
+            = DYLD_FALLBACK_LIBRARY_PATH.split(os.pathsep)
     else:
         DYLD_FALLBACK_LIBRARY_PATH = []
     DYLD_FALLBACK_LIBRARY_PATH = (

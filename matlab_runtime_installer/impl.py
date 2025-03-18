@@ -6,6 +6,7 @@ __all__ = [
     "init_runtime",
     "terminate_runtime",
     "guess_prefix",
+    "guess_arch",
 ]
 import atexit
 import importlib
@@ -37,6 +38,14 @@ def install(version=None, prefix=None, auto_answer=False):
     """
     Install the matlab runtime.
 
+    !!! warning
+        BY SETTING `default_answer=True`, YOU ACCEPT THE TERMS OF THE
+        MATLAB RUNTIME LICENSE. THE MATLAB RUNTIME INSTALLER WILL BE
+        RUN WITH THE ARGUMENT `-agreeToLicense yes`.
+        IF YOU ARE NOT WILLING TO DO SO, DO NOT CALL THIS FUNCTION.
+
+        https://mathworks.com/help/compiler/install-the-matlab-runtime.html
+
     Parameters
     ----------
     version : [list of] str, default="latest"
@@ -48,7 +57,6 @@ def install(version=None, prefix=None, auto_answer=False):
         * MacOS:    /Applications/MATLAB/MATLAB_Runtime
     default_answer : bool
         Default answer to all questions.
-        **This entails accepting the MATLAB Runtime license agreement.**
 
     Raises
     ------
@@ -69,6 +77,7 @@ def install(version=None, prefix=None, auto_answer=False):
 
     if prefix is None:
         prefix = guess_prefix()
+    prefix = op.realpath(op.abspath(prefix))
 
     # --- check already exists -----------------------------------------
     if op.exists(op.join(prefix, version, license)):
@@ -84,6 +93,7 @@ def install(version=None, prefix=None, auto_answer=False):
     askuser(f"Download installer from {url}?", "yes", auto_answer, raise_if_no)
 
     with tempfile.TemporaryDirectory() as tmpdir:
+        tmpdir = op.realpath(op.abspath(tmpdir))
 
         print(f"Downloading from {url} ...")
         installer = url_download(url, tmpdir)
@@ -93,6 +103,7 @@ def install(version=None, prefix=None, auto_answer=False):
         if installer.endswith(".zip"):
 
             askuser(f"Unzip {installer}?", "yes", auto_answer, raise_if_no)
+            print(f"Unzipping {installer} ...")
 
             with ZipFileWithExecPerm(installer) as zip:
                 zip.extractall(tmpdir)
@@ -101,15 +112,20 @@ def install(version=None, prefix=None, auto_answer=False):
                 installer = op.join(tmpdir, "setup.exe")
             else:
                 installer = op.join(tmpdir, "install")
+            print("done ->", installer)
 
         if not op.exists(installer):
+            print("No installer found in archive:", os.listdir(tmpdir))
             raise FileNotFoundError("No installer found in archive")
 
         # --- install --------------------------------------------------
 
         question = (
-            "By running this code, you agree to the MATLAB Runtime "
-            "license agreement:\n"
+            "BY ENTERING 'YES', YOU ACCEPT THE TERMS OF THE MATLAB RUNTIME "
+            "LICENSE, LINKED BELOW. THE MATLAB RUNTIME INSTALLER WILL BE "
+            "RUN WITH THE ARGUMENT `-agreeToLicense yes`. "
+            "IF YOU ARE NOT WILLING TO DO SO, ENTER 'NO' AND THE "
+            "INSTALLATION WILL BE ABORTED."
             f"\t{op.join(tmpdir, 'matlabruntime_license_agreement.pdf')}\n"
         )
         askuser(question, "yes", auto_answer, raise_if_no)
@@ -124,17 +140,34 @@ def install(version=None, prefix=None, auto_answer=False):
                 "sudo", "xattr", "-r", "-d", "com.apple.quarantine", tmpdir
             ])
 
-        subprocess.call([
+        call = [
             installer,
+            "-agreeToLicense", "yes",
+            "-mode", "silent",
             "-destinationFolder", prefix,
             "-tmpdir", tmpdir,
-            "-mode", "silent",
-            "-agreeToLicense", "yes"
-        ])
+        ]
+        print("Installing", call, "...")
+        ret = subprocess.call(call)
+        if ret:
+            print("Installation failed?")
+        else:
+            print("done ->", op.join(prefix, version))
 
         # --- check ----------------------------------------------------
-        if not op.exists(op.join(prefix, version, license)):
-            raise RuntimeError("Runtime not found where it is expected.")
+        path_installed = op.join(prefix, version)
+        if not op.exists(op.join(path_installed, license)):
+            if op.exists(path_installed):
+                print(
+                    "Runtime not found where it is expected (v):",
+                    os.listdir(path_installed)
+                )
+            elif op.exists(prefix):
+                print(
+                    "Runtime not found where it is expected (p):",
+                    os.listdir(prefix)
+                )
+            raise FileNotFoundError("Runtime not found where it is expected.")
 
         license = op.join(prefix, version, license)
         print("Runtime succesfully installed at:", op.join(prefix, version))

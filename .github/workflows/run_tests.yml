@@ -1,0 +1,55 @@
+name: Unit tests
+on:
+  workflow_dispatch:
+  workflow_call:
+  push:
+    paths:
+      - tests/**
+      - matlab_runtime_installer/**
+      - setup.py
+      - pyproject.toml
+  # pull_request:
+
+jobs:
+  run-unit-tests:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: False
+      matrix:
+        os: [ubuntu-latest, macos-13, macos-latest] #, windows-latest]
+        python-version: ["3.9", "3.10", "3.11", "3.12"]
+        include:
+          - os: ubuntu-latest
+            os-name: Linux
+            platform: Linux
+            python-bin: python
+          - os: macos-13
+            os-name: macOS_Intel
+            platform: Mac
+            python-bin: mwpython2
+          - os: macos-latest
+            os-name: macOS_Apple_Silicon
+            platform: Mac
+            python-bin: mwpython2
+          # - os: windows-latest
+          #   os-name: Windows
+          #   platform: Windows
+          #   python-bin: python
+
+    steps:
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Install
+        run: python -m pip install ".[test]"
+
+      - name: Run installation tests
+        run: python -m pytest tests/test_install.py
+
+      - name: Run other tests
+        run: ${{ matrix.python-bin }} -m pytest
