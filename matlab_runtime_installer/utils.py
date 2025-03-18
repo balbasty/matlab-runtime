@@ -67,10 +67,11 @@ class ZipFileWithExecPerm(zipfile.ZipFile):
             member = self.getinfo(member)
 
         targetpath = super()._extract_member(member, targetpath, pwd)
+        targetpath = op.realpath(targetpath)
 
         if stat.S_ISLNK(member.external_attr >> 16) and \
                 hasattr(os, "symlink"):     # Symlink
-            link = self.open(member, pwd=pwd).read()
+            link = op.realpath(self.open(member, pwd=pwd).read())
             try:
                 os.symlink(link, targetpath)
                 return targetpath
