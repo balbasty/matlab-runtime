@@ -71,7 +71,11 @@ class ZipFileWithExecPerm(zipfile.ZipFile):
         attr = member.external_attr >> 16
 
         # https://bugs.python.org/issue27318
-        if stat.S_ISLNK(attr) and hasattr(os, "symlink"):
+        if (
+            platform.system() != "Windows" and
+            stat.S_ISLNK(attr) and
+            hasattr(os, "symlink")
+        ):
             link = self.open(member, pwd=pwd).read()
             shutil.move(targetpath, targetpath + ".__backup__")
             try:
