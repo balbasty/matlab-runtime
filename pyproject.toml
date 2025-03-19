@@ -19,8 +19,8 @@ dynamic = ["version"]
 test = ["pytest"]
 
 [project.urls]
-Homepage = "https://github.com/balbasty/matlab-runtime-installer"
-Issues = "https://github.com/balbasty/matlab-runtime-installer/issues"
+Homepage = "https://github.com/balbasty/matlab-runtime"
+Issues = "https://github.com/balbasty/matlab-runtime/issues"
 
 [project.scripts]
 install_matlab_runtime = "matlab_runtime.cli:main"
