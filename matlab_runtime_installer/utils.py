@@ -202,7 +202,7 @@ def guess_prefix():
     assert False
 
 
-def find_runtime(version):
+def find_runtime(version, prefix=None):
     """
     Find an installed MATLAB runtime with a specific version.
     """
@@ -210,7 +210,8 @@ def find_runtime(version):
     version_info = "VersionInfo.xml"
 
     # Check under prefix
-    prefix = guess_prefix()
+    if prefix is None:
+        prefix = guess_prefix()
     if op.exists(op.join(prefix, version, version_info)):
         return op.join(prefix, version)
 

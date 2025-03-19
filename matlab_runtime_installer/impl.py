@@ -298,7 +298,7 @@ def init_sdk(
 
     # --- find version  ------------------------------------------------
     version = guess_release(version, arch)
-    path = find_runtime(version)
+    path = find_runtime(version, prefix)
 
     # --- install version  ---------------------------------------------
     if not path:
