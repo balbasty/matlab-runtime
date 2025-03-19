@@ -140,6 +140,8 @@ def install(version=None, prefix=None, auto_answer=False):
                 "sudo", "xattr", "-r", "-d", "com.apple.quarantine", tmpdir
             ])
 
+        tmp_for_installer = op.join(tmpdir, "tmp_for_installer")
+        os.makedirs(tmp_for_installer)
         call = [
             installer,
             "-agreeToLicense", "yes",
