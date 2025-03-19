@@ -173,6 +173,66 @@ def macos_version():
     ver = tuple(map(int, ver.split(".")))
     return ver
 
+CANDIDATE_LOCATIONS_BY_OS = {
+    "win": [
+        "C:\\Program Files (x86)\\MATLAB\\MATLAB Runtime\\{release}",
+        "C:\\Program Files\\MATLAB\\MATLAB Runtime\\{release}",
+        "C:\\Program Files\\MATLAB\\{release}",
+        "C:\\Program Files (x86)\\MATLAB\\{release}",
+    ], 
+    "gln": [
+        "/usr/local/MATLAB/MATLAB_Runtime/{release}",
+        "/usr/local/MATLAB/{release}"
+    ],
+    "mac": [
+        "/Applications/MATLAB/MATLAB_Runtime/{release}",
+        "/Applications/MATLAB_{release}.app",
+        "/Applications/MATLAB/{release}"
+    ]
+}
+
+def iter_existing_installations(variant='latest_installed'):
+    """ 
+    Iterate over MATLAB and MATLAB Runtime installations in common location. 
+
+    If variant is "latest_installed", the function will return the latest
+    installed version. Otherwise, it will return the versions that
+    matches the variant.
+
+    Yields
+    ------
+    path : str 
+        Path to the installation
+    variant : str
+        Version of the installation
+    """
+    arch = guess_arch()
+    bases = CANDIDATE_LOCATIONS_BY_OS[arch[:3]]
+    print(bases)
+
+    if os.environ.get("MATLAB_RUNTIME_PATH", ""):
+        yield (os.environ["MATLAB_RUNTIME_PATH"], variant)
+
+    import re
+    import glob
+
+    if variant == "latest_installed":
+        pattern = re.compile(r"R\d{4}[ab]")
+    else: 
+        pattern = re.compile(variant)
+
+    paths = []
+    for base in bases:
+        try:
+            paths.extend(glob.glob(base.format(release="*")))
+        except FileNotFoundError:
+            continue
+
+    for name in sorted(paths, reverse=True):
+        search = re.search(pattern, name)
+        if search:
+            yield op.join(base, name), search.group()
+    
 
 def guess_prefix():
     """
@@ -192,6 +252,7 @@ def guess_prefix():
     """
     if os.environ.get("MATLAB_RUNTIME_PATH", ""):
         return os.environ["MATLAB_RUNTIME_PATH"]
+    
     arch = guess_arch()
     if arch[:3] == "win":
         return "C:\\Program Files\\MATLAB\\MATLAB Runtime\\"
