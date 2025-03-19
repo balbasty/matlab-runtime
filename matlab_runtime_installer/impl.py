@@ -149,7 +149,7 @@ def install(version=None, prefix=None, auto_answer=False):
                 "Running the MATLAB installer requires signing off its "
                 "binaries, which requires sudo:"
             )
-            subprocess.call([
+            subprocess.run([
                 "sudo", "xattr", "-r", "-d", "com.apple.quarantine", tmpdir
             ])
 
@@ -161,7 +161,8 @@ def install(version=None, prefix=None, auto_answer=False):
             "-tmpdir", tmpdir,
         ]
         print("Installing", call, "...")
-        ret = subprocess.call(call)
+        # NOTE: capture_output=True is **required** on windows
+        ret = subprocess.run(call, capture_output=True).returncode
         if ret:
             print("Installation failed?")
         else:
@@ -242,9 +243,9 @@ def uninstall(version=None, prefix=None, auto_answer=False):
         else:
             versions = [version]
         for ver in versions:
-            subprocess.call(op.join(
+            subprocess.run([op.join(
                 prefix, ver, "bin", arch, "Uninstall_MATLAB_Runtime.exe"
-            ))
+            )])
     else:
         # --- Unix: remove folder ---
         shutil.rmtree(rmdir)

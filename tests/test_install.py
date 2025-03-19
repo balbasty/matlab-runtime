@@ -13,7 +13,3 @@ else:
 
 def test_install_r2024b():
     install("R2024b", prefix=tmp_prefix, auto_answer=True)
-
-
-# def test_install_r2024a():
-#     install("R2024a", prefix=tmp_prefix, auto_answer=True)
