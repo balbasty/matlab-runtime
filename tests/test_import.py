@@ -2,7 +2,7 @@ import os.path as op
 from tempfile import gettempdir
 
 from matlab_runtime_installer import (
-    init_sdk, import_deployed, guess_arch, guess_prefix
+    init, import_deployed, guess_arch, guess_prefix
 )
 
 if guess_arch()[:3] == "mac":
@@ -14,7 +14,7 @@ else:
 
 
 def test_import_r2024b():
-    init_sdk("R2024b", prefix=tmp_prefix)
+    init("R2024b", prefix=tmp_prefix)
     from . import _test_runtime
     mod = import_deployed(_test_runtime)
     assert mod.test_runtime() == "success"

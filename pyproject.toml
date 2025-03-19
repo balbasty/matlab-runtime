@@ -1,5 +1,5 @@
 [project]
-name = "matlab-runtime-installer"
+name = "matlab-runtime"
 authors = [{name = "Yael Balbastre", email = "y.balbastre@ucl.ac.uk"}]
 maintainers = [{name = "Yael Balbastre", email = "y.balbastre@ucl.ac.uk"}]
 description = "Cross-platform installer for the MATLAB runtime"
@@ -23,8 +23,8 @@ Homepage = "https://github.com/balbasty/matlab-runtime-installer"
 Issues = "https://github.com/balbasty/matlab-runtime-installer/issues"
 
 [project.scripts]
-install_matlab_runtime = "matlab_runtime_installer.cli:main"
-mwpython2 = "matlab_runtime_installer.cli:mwpython2"
+install_matlab_runtime = "matlab_runtime.cli:main"
+mwpython2 = "matlab_runtime.cli:mwpython2"
 
 [build-system]
 requires = [
@@ -35,7 +35,7 @@ requires = [
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-packages = ["matlab_runtime_installer"]
+packages = ["matlab_runtime"]
 
 [tool.versioningit]
 default-version = "0+unknown"
@@ -47,4 +47,4 @@ dirty = "{base_version}+{distance}.{vcs}{rev}.dirty"
 distance-dirty = "{base_version}+{distance}.{vcs}{rev}.dirty"
 
 [tool.versioningit.write]
-file = "matlab_runtime_installer/_version.py"
+file = "matlab_runtime/_version.py"
