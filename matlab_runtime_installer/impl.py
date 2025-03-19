@@ -143,12 +143,15 @@ def install(version=None, prefix=None, auto_answer=False):
         call = [
             installer,
             "-agreeToLicense", "yes",
-            "-mode", "silent",
+            # "-mode", "silent",
             "-destinationFolder", prefix,
-            "-tmpdir", tmpdir,
+            # "-tmpdir", tmpdir,
         ]
         print("Installing", call, "...")
-        ret = subprocess.call(call)
+        # ret = subprocess.call(call)
+        p = subprocess.run(call, capture_output=True)
+        ret = p.returncode
+        print(p)
         if ret:
             print("Installation failed?")
         else:
