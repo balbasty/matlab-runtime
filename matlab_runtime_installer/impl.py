@@ -147,7 +147,8 @@ def install(version=None, prefix=None, auto_answer=False):
             "-agreeToLicense", "yes",
             "-mode", "silent",
             "-destinationFolder", prefix,
-            "-tmpdir", tmp_for_installer,
+            # "-tmpdir", tmp_for_installer,
+            "-tmpdir", tmpdir,
         ]
         print("Installing", call, "...")
         # ret = subprocess.call(call)
