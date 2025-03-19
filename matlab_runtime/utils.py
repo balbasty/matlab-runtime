@@ -208,7 +208,6 @@ def iter_existing_installations(variant='latest_installed'):
     """
     arch = guess_arch()
     bases = CANDIDATE_LOCATIONS_BY_OS[arch[:3]]
-    print(bases)
 
     if os.environ.get("MATLAB_RUNTIME_PATH", ""):
         yield (os.environ["MATLAB_RUNTIME_PATH"], variant)
