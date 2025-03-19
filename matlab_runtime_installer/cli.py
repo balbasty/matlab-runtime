@@ -21,28 +21,30 @@ def _make_parser():
         "Version of the runtime to [un]install, such as 'latest' or 'R2022b' "
         "or '9.13'. Default is 'all' if '--uninstall' else 'latest'."
     )
-    p.add_argument("--version", "-v", nargs="+", help=_)
+    p.add_argument("-v", "--version", nargs="+", help=_)
     _ = f"Installation prefix. Default: '{guess_prefix()}'."
-    p.add_argument("--prefix", "-p", help=_, default=guess_prefix())
+    p.add_argument("-p", "--prefix", help=_, default=guess_prefix())
     _ = (
         "Uninstall this version of the runtime. "
         "Use '--version all' to uninstall all versions."
     )
-    p.add_argument("--uninstall", "-u", action="store_true", help=_)
+    p.add_argument("-u", "--uninstall", action="store_true", help=_)
     _ = (
         "Default answer (usually yes) to all questions. "
         "BY USING THIS OPTION, YOU ACCEPT THE TERMS OF THE MATLAB RUNTIME "
         "LICENSE. THE MATLAB RUNTIME INSTALLER WILL BE RUN WITH THE "
         "ARGUMENT `-agreeToLicense yes`. "
-        "IF YOU ARE NOT WILLING TO DO SO, DO NOT CALL THIS FUNCTION. "
+        "IF YOU ARE NOT WILLING TO DO SO, DO NOT USE THIS OPTION. "
         "https://mathworks.com/help/compiler/install-the-matlab-runtime.html"
     )
-    p.add_argument("--yes", "-y", action="store_true", help=_)
+    p.add_argument("-y", "--yes", action="store_true", help=_)
     return p
 
 
 def main(args=None):
-    p = _make_parser().parse_args(args or sys.argv[1:])
+    if args is None:
+        args = sys.argv[1:]
+    p = _make_parser().parse_args(args)
     if p.uninstall:
         uninstall(p.version, p.prefix, p.yes)
     else:
@@ -53,32 +55,26 @@ def main(args=None):
 
 
 _mwpython_help = """
-usage: mwpython [-verbose] [-variant vrt] [py_args] [-mlstartup opt[,opt]] [-c cmd | -m mod | scr.py]
+usage: mwpython2 [-verbose] [-variant vrt] [py_args] [-mlstartup opt[,opt]] [-c cmd | -m mod | scr.py]
 
 Arguments:
--verbose            : verbose mode
-py_args             : arguments and options passed to Python
--mlstartup opt[,opt]: set of MATLAB runtime startup options
--c cmd              : execute Python command cmd
--m mod [arg[,arg]]  : execute Python module mod
-scr.py [arg[,arg]]  : execute Python script scr.py
+    -verbose            : verbose mode
+    -variant            : MATLAB runtime version to use (latest installed)
+    py_args             : arguments and options passed to Python
+    -mlstartup opt[,opt]: set of MATLAB runtime startup options
+    -c cmd              : execute Python command cmd
+    -m mod [arg[,arg]]  : execute Python module mod
+    scr.py [arg[,arg]]  : execute Python script scr.py
 
 Examples:
- Execute Python script myscript.py with mwpython in verbose mode:
-  mwpython -verbose myscript.py arg1 arg2
- Execute Python script myscript.py, suppressing the runtime's Java VM:
-  mwpython -mlstartup -nojvm myscript.py arg1 arg2
- Execute Python module mymod.py:
-  mwpython -m mymod arg1 arg2
- Execute Python command 'x=3;print(x)'
-  mwpython -c "'x=3;print(x)'"
-
-To run mwpython with a specific Python interpreter, do one of the following:
-  - set env. var. VIRTUAL_ENV to <PYTHONROOT>, where <PYTHONROOT> must be the
-      actual directory where Python is installed (for example,
-      '/Library/Frameworks/Python.framework/Versions/3.9'), not a symbolic link
-  - set env. var. PYTHONHOME to <PYTHONROOT>
-  - call venv from the interpreter to set up a virtual environment
+    Execute Python script myscript.py with mwpython in verbose mode:
+        mwpython -verbose myscript.py arg1 arg2
+    Execute Python script myscript.py, suppressing the runtime's Java VM:
+        mwpython -mlstartup -nojvm myscript.py arg1 arg2
+    Execute Python module mymod.py:
+        mwpython -m mymod arg1 arg2
+    Execute Python command 'x=3;print(x)'
+        mwpython -c "'x=3;print(x)'"
 """  # noqa: E501
 
 
@@ -86,7 +82,9 @@ def mwpython2(args=None):
     # Python wrapper that replaces MathWorks's mwpython.
     # Uses DYLD_FALLBACK_LIBRARY_PATH instead of DYLD_LIBRARY_PATH.
     # Uses the calling python to determine which python to wrap.
-    args = list(args or sys.argv[1:])
+    if args is None:
+        args = sys.argv[1:]
+    args = list(args)
     ENV = os.environ
 
     command = []
