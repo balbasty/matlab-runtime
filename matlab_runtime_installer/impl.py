@@ -140,21 +140,15 @@ def install(version=None, prefix=None, auto_answer=False):
                 "sudo", "xattr", "-r", "-d", "com.apple.quarantine", tmpdir
             ])
 
-        tmp_for_installer = op.join(tmpdir, "tmp_for_installer")
-        os.makedirs(tmp_for_installer)
         call = [
             installer,
             "-agreeToLicense", "yes",
             "-mode", "silent",
             "-destinationFolder", prefix,
-            # "-tmpdir", tmp_for_installer,
             "-tmpdir", tmpdir,
         ]
         print("Installing", call, "...")
-        ret = subprocess.call(call)
-        # p = subprocess.run(call, capture_output=True)
-        # ret = p.returncode
-        # print(p)
+        ret = subprocess.run(call).returncode
         if ret:
             print("Installation failed?")
         else:
