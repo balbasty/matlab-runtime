@@ -143,7 +143,7 @@ def install(version=None, prefix=None, auto_answer=False):
         call = [
             installer,
             "-agreeToLicense", "yes",
-            # "-mode", "silent",
+            "-mode", "silent",
             "-destinationFolder", prefix,
             # "-tmpdir", tmpdir,
         ]
