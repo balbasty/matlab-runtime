@@ -319,7 +319,8 @@ def init_sdk(
 
     # --- set paths  ---------------------------------------------------
     if arch[:3] == "win":
-        os.environ['PATH'] = os.pathsep.join(ext, bin, os.environ['PATH'])
+        PATH = os.environ['PATH'].split(os.pathsep)
+        os.environ['PATH'] = os.pathsep.join([ext, bin] + PATH)
 
     sys.path.insert(0, bin)
     sys.path.insert(0, mod)
