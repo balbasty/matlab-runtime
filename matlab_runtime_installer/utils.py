@@ -243,7 +243,7 @@ def find_runtime(version):
         ]
     for base in bases:
         base = base.format(release=version)
-        if op.exists(base, "VersionInfo.xml"):
+        if op.exists(op.join(base, "VersionInfo.xml")):
             return base
 
     # Check whether a matlab binary is on the path
