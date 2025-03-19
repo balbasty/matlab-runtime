@@ -148,6 +148,7 @@ def install(version=None, prefix=None, auto_answer=False):
             "-tmpdir", tmpdir,
         ]
         print("Installing", call, "...")
+        # NOTE: capture_output=True is **required** on windows
         ret = subprocess.run(call, capture_output=True).returncode
         if ret:
             print("Installation failed?")
