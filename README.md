@@ -15,7 +15,7 @@ This is a small package that simply allows to
 ## Installation
 
 ```shell
-pip install matlab-runtime-installer @ https://github.com/balbasty/matlab-runtime-installer
+pip install git+https://github.com/balbasty/matlab-runtime
 ```
 
 ## Command line tool
