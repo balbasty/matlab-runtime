@@ -51,5 +51,5 @@ jobs:
       - name: Run installation tests
         run: python -m pytest tests/test_install.py
 
-      # - name: Run other tests
-      #   run: ${{ matrix.python-bin }} -m pytest --ignore tests/test_install.py -- tests
+      - name: Run other tests
+        run: ${{ matrix.python-bin }} -m pytest --ignore tests/test_install.py -- tests
