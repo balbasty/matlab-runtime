@@ -1,9 +1,7 @@
 import os.path as op
 from tempfile import gettempdir
 
-from matlab_runtime_installer import (
-    init, import_deployed, guess_arch, guess_prefix
-)
+from matlab_runtime import init, import_deployed, guess_arch, guess_prefix
 
 if guess_arch()[:3] == "mac":
     # Use default prefix so that we can easily call mwpython2 later

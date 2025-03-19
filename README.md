@@ -56,7 +56,7 @@ options:
 Install a version of the runtime:
 
 ```python
-from matlab_runtime_installer import install, guess_prefix
+from matlab_runtime import install, guess_prefix
 
 version = "R2024b"
 install(version, auto_answer=True)
@@ -68,7 +68,7 @@ Import a compiled MATLAB package:
 
 ```python
 import my_matlab_project
-from matlab_runtime_installer import init, import_deployed
+from matlab_runtime import init, import_deployed
 
 init("R2024b")  # Same version used when compiling the package
 
