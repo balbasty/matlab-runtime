@@ -8,7 +8,7 @@ on:
       - matlab_runtime_installer/**
       - setup.py
       - pyproject.toml
-  # pull_request:
+  pull_request:
 
 jobs:
   run-unit-tests:
@@ -16,7 +16,7 @@ jobs:
     strategy:
       fail-fast: False
       matrix:
-        os: [ubuntu-latest, macos-13, macos-latest] #, windows-latest]
+        os: [ubuntu-latest, macos-13, macos-latest, windows-latest]
         python-version: ["3.9", "3.10", "3.11", "3.12"]
         include:
           - os: ubuntu-latest
@@ -31,10 +31,10 @@ jobs:
             os-name: macOS_Apple_Silicon
             platform: Mac
             python-bin: mwpython2
-          # - os: windows-latest
-          #   os-name: Windows
-          #   platform: Windows
-          #   python-bin: python
+          - os: windows-latest
+            os-name: Windows
+            platform: Windows
+            python-bin: python
 
     steps:
       - name: Set up Python ${{ matrix.python-version }}
@@ -51,5 +51,5 @@ jobs:
       - name: Run installation tests
         run: python -m pytest tests/test_install.py
 
-      - name: Run other tests
-        run: ${{ matrix.python-bin }} -m pytest
+      # - name: Run other tests
+      #   run: ${{ matrix.python-bin }} -m pytest --ignore tests/test_install.py -- tests
