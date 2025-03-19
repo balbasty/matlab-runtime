@@ -247,10 +247,12 @@ def find_runtime(version):
             return base
 
     # Check whether a matlab binary is on the path
-    path = op.realpath(shutil.which("matlab"))
-    path = op.realpath(op.join(op.dirname(path), ".."))
-    if guess_matlab_release(path) == version:
-        return path
+    path = shutil.which("matlab")
+    if path:
+        path = op.realpath(path)
+        path = op.realpath(op.join(op.dirname(path), ".."))
+        if guess_matlab_release(path) == version:
+            return path
 
     # Nothing -> return
     return None
