@@ -51,15 +51,39 @@ options:
 
 ## Python API
 
-### Example
+### Examples
+
+Install a version of the runtime:
 
 ```python
-from matlab_runtime_installer import install, guess_prefix
+from matlab_runtime import install, guess_prefix
 
 version = "R2024b"
 install(version, auto_answer=True)
 
 print(guess_prefix())
+```
+
+Import a compiled MATLAB package:
+
+```python
+import my_matlab_project
+from matlab_runtime import init, import_deployed
+
+init("R2024b")  # Same version used when compiling the package
+
+my_matlab_project = import_deployed(my_matlab_project)
+my_matlab_project.my_function()
+```
+
+Note that `my_matlab_project` only needs to contain an (eventually empty)
+`__init__.py` and the compiled CTF file with the same name as the module.
+None of the other files spit out by the MATLAB compiler are requried.
+
+```text
+└── my_matlab_project/
+    ├── __init__.py
+    └── my_matlab_project.ctf
 ```
 
 ### API
@@ -134,7 +158,7 @@ def uninstall(version=None, prefix=None, auto_answer=False):
     """
     ...
 
-def init_sdk(
+def init(
     version="latest_installed",
     install_if_missing=False,
     prefix=None,

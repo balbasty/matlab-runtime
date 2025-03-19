@@ -1,7 +1,7 @@
 __all__ = [
     "install",
     "uninstall",
-    "init_sdk",
+    "init",
     "import_deployed",
     "init_runtime",
     "terminate_runtime",
@@ -260,7 +260,7 @@ _SDK = "matlab_pysdk.runtime"
 _MLB = "matlab"
 
 
-def init_sdk(
+def init(
     version="latest_installed",
     install_if_missing=False,
     prefix=None,
@@ -350,7 +350,7 @@ def init_sdk(
 class _PathInitializer:
     def __init__(self):
         if not _INITIALIZED["SDK"]:
-            init_sdk()
+            init()
         self.cppext_handle = importlib.import_module(_CPP)
 
 
@@ -401,7 +401,7 @@ def init_runtime(option_list=tuple()):
     if _INITIALIZED.get("RUNTIME", False):
         raise ValueError("MATLAB runtime already initialized")
     if not _INITIALIZED.get("SDK", False):
-        init_sdk()
+        init()
 
     cppext = importlib.import_module(_CPP)
 
