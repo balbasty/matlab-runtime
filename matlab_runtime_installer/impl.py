@@ -25,6 +25,7 @@ from .utils import (
     guess_prefix,
     guess_installer,
     guess_release,
+    find_runtime,
     macos_version,
     matlab_release,
     matlab_version,
@@ -80,13 +81,25 @@ def install(version=None, prefix=None, auto_answer=False):
     prefix = op.realpath(op.abspath(prefix))
 
     # --- check already exists -----------------------------------------
-    if op.exists(op.join(prefix, version, license)):
+
+    if op.exists(op.join(prefix, version, "VersionInfo.xml")):
         # Do not raise_if_no so that we can exit peacefully
         ok = askuser("Runtime already exists. Reinstall?", "no", auto_answer)
         if not ok:
             print("Do not reinstall:", op.join(prefix, version))
             return
         print("Runtime already exists. Reinstalling...")
+
+    elif find_runtime(version):
+        path = find_runtime(version)
+        msg = (
+            f"Runtime already exists in a different location ({path}). "
+            "Install anyway?"
+        )
+        ok = askuser(msg, "no", auto_answer)
+        if not ok:
+            print("Do not install:", op.join(prefix, version))
+            return
 
     # --- download -----------------------------------------------------
 
@@ -156,7 +169,7 @@ def install(version=None, prefix=None, auto_answer=False):
 
         # --- check ----------------------------------------------------
         path_installed = op.join(prefix, version)
-        if not op.exists(op.join(path_installed, license)):
+        if not op.exists(op.join(path_installed, "VersionInfo.xml")):
             if op.exists(path_installed):
                 print(
                     "Runtime not found where it is expected (v):",
@@ -278,18 +291,19 @@ def init_sdk(
 
     # --- prepare  -----------------------------------------------------
     arch = guess_arch()
-    license = "matlabruntime_license_agreement.pdf"
     version = version or "latest_installed"
     if prefix is None:
         prefix = guess_prefix()
 
     # --- find version  ------------------------------------------------
     version = guess_release(version, arch)
+    path = find_runtime(version)
 
     # --- install version  ---------------------------------------------
-    if not op.exists(op.join(prefix, version, license)):
+    if not path:
         if install_if_missing:
             install(version, prefix, auto_answer)
+            path = op.join(prefix, version)
         else:
             raise FileNotFoundError(
                 "Version not found in installed runtimes:",
@@ -297,11 +311,10 @@ def init_sdk(
             )
 
     # --- prepare paths  -----------------------------------------------
-    prefix = op.join(prefix, version)
-    ext = op.join(prefix, 'extern', 'bin', arch)
-    sdk = op.join(prefix, 'toolbox', 'compiler_sdk', 'pysdk_py')
+    ext = op.join(path, 'extern', 'bin', arch)
+    sdk = op.join(path, 'toolbox', 'compiler_sdk', 'pysdk_py')
     mod = op.join(sdk, 'matlab_mod_dist')
-    bin = op.join(prefix, 'bin', arch)
+    bin = op.join(path, 'bin', arch)
 
     # --- set paths  ---------------------------------------------------
     if arch[:3] == "win":

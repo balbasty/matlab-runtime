@@ -202,21 +202,90 @@ def guess_prefix():
     assert False
 
 
+def find_runtime(version):
+    """
+    Find an installed MATLAB runtime with a specific version.
+    """
+    version = matlab_release(version)
+    version_info = "VersionInfo.xml"
+
+    # Check under prefix
+    prefix = guess_prefix()
+    if op.exists(op.join(prefix, version, version_info)):
+        return op.join(prefix, version)
+
+    # Check if MATLAB_PATH is set
+    if os.environ.get("MATLAB_PATH", ""):
+        path = os.environ["MATLAB_PATH"].rstrip(op.sep)
+        if guess_matlab_release(path) == version:
+            return path
+
+    # Look for other known locations
+    arch = guess_arch()
+    if arch[:3] == "win":
+        bases = [
+            "C:\\Program Files (x86)\\MATLAB\\MATLAB Runtime\\{release}"
+            "C:\\Program Files\\MATLAB\\MATLAB Runtime\\{release}"
+            "C:\\Program Files\\MATLAB\\{release}"
+            "C:\\Program Files (x86)\\MATLAB\\{release}"
+        ]
+    elif arch[:4] == "glnx":
+        bases = [
+            "/usr/local/MATLAB/MATLAB_Runtime/{release}"
+            "/usr/local/MATLAB/{release}"
+        ]
+    elif arch[:3] == "mac":
+        bases = [
+            "/Applications/MATLAB/MATLAB_Runtime/{release}"
+            "/Applications/MATLAB_{release}.app"
+            "/Applications/MATLAB_{release}"
+            "/Applications/MATLAB/{release}"
+        ]
+    for base in bases:
+        base = base.format(release=version)
+        if op.exists(base, "VersionInfo.xml"):
+            return base
+
+    # Check whether a matlab binary is on the path
+    path = op.realpath(shutil.which("matlab"))
+    path = op.realpath(op.join(op.dirname(path), ".."))
+    if guess_matlab_release(path) == version:
+        return path
+
+    # Nothing -> return
+    return None
+
+
 # ----------------------------------------------------------------------
 #   MATLAB SDK
 # ----------------------------------------------------------------------
 
 
 def guess_pymatlab_version(matlab):
-    return _guess_pymatlab(matlab, "version")
+    """Guess dot-version of loaded matlab module."""
+    return _guess_pymatlab_version(matlab, "version")
 
 
 def guess_pymatlab_release(matlab):
-    return _guess_pymatlab(matlab, "release")
+    """Guess release of loaded matlab module."""
+    return _guess_pymatlab_version(matlab, "release")
 
 
-def _guess_pymatlab(matlab, key):
-    path = matlab.get_arch_filename()
+def _guess_pymatlab_version(matlab, key):
+    return _guess_matlab_version(matlab.get_arch_filename(), key)
+
+
+def guess_matlab_version(path):
+    """Guess dot-version of matlab package installed at path."""
+    return _guess_matlab_version(path, "version")
+
+
+def guess_matlab_release(path):
+    """Guess release of matlab package installed at path."""
+    return _guess_matlab_version(path, "release")
+
+
+def _guess_matlab_version(path, key):
     while path:
         if op.exists(op.join(path, 'VersionInfo.xml')):
             path = op.join(path, 'VersionInfo.xml')
