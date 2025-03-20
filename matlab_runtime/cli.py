@@ -8,6 +8,7 @@ from .utils import (
   guess_arch,
   guess_prefix,
   guess_release,
+  iter_existing_installations, 
   SUPPORTED_PYTHON_VERSIONS,
 )
 
@@ -125,9 +126,6 @@ def mwpython2(args=None):
         print("------------------------------------------")
 
     arch = guess_arch()
-    prefix = guess_prefix()
-    variant = guess_release(variant)
-    exe_dir = op.join(prefix, variant, "bin")
 
     if arch[:3] != "mac":
         print("Execute mwpython only on Mac.")
@@ -135,6 +133,19 @@ def mwpython2(args=None):
 
     if verbose:
         print(f"arch: {arch}")
+
+    exe_dir = None
+    for path, ver in iter_existing_installations(variant):
+        if op.exists(op.join(path, "bin", 'mwpython')):
+            exe_dir = op.join(path, "bin")
+            variant = ver
+            if verbose: 
+                print(f"Found mwpython for MATLAB {variant} at {exe_dir}")
+            break
+    if exe_dir is None:
+        raise RuntimeError("No MATLAB Runtime found. If you have installed"
+        " Matlab Runtime in an unusual location, please set the "
+        "MATLAB_RUNTIME_PATH environment variable to the path of the installation.")
 
     # --- PYTHONHOME ---------------------------------------------------
 
