@@ -26,6 +26,7 @@ from .utils import (
     guess_installer,
     guess_release,
     find_runtime,
+    patch_runtime,
     macos_version,
     matlab_release,
     matlab_version,
@@ -35,7 +36,7 @@ from .utils import (
 )
 
 
-def install(version=None, prefix=None, auto_answer=False):
+def install(version=None, prefix=None, auto_answer=False, patch=None):
     """
     Install the matlab runtime.
 
@@ -58,6 +59,8 @@ def install(version=None, prefix=None, auto_answer=False):
         * MacOS:    /Applications/MATLAB/MATLAB_Runtime
     default_answer : bool
         Default answer to all questions.
+    patch : bool
+        Patch the runtime if needed (MacOS only).
 
     Raises
     ------
@@ -101,13 +104,12 @@ def install(version=None, prefix=None, auto_answer=False):
             print("Do not install:", op.join(prefix, version))
             return
 
-    # --- download -----------------------------------------------------
-
     askuser(f"Download installer from {url}?", "yes", auto_answer, raise_if_no)
 
     with tempfile.TemporaryDirectory() as tmpdir:
         tmpdir = op.realpath(op.abspath(tmpdir))
 
+        # --- download -------------------------------------------------
         print(f"Downloading from {url} ...")
         installer = url_download(url, tmpdir)
         print("done ->", installer)
@@ -168,24 +170,32 @@ def install(version=None, prefix=None, auto_answer=False):
         else:
             print("done ->", op.join(prefix, version))
 
-        # --- check ----------------------------------------------------
-        path_installed = op.join(prefix, version)
-        if not op.exists(op.join(path_installed, "VersionInfo.xml")):
-            if op.exists(path_installed):
-                print(
-                    "Runtime not found where it is expected (v):",
-                    os.listdir(path_installed)
-                )
-            elif op.exists(prefix):
-                print(
-                    "Runtime not found where it is expected (p):",
-                    os.listdir(prefix)
-                )
-            raise FileNotFoundError("Runtime not found where it is expected.")
+    # --- check --------------------------------------------------------
+    path_installed = op.join(prefix, version)
+    if not op.exists(op.join(path_installed, "VersionInfo.xml")):
+        if op.exists(path_installed):
+            print(
+                "Runtime not found where it is expected (v):",
+                os.listdir(path_installed)
+            )
+        elif op.exists(prefix):
+            print(
+                "Runtime not found where it is expected (p):",
+                os.listdir(prefix)
+            )
+        raise FileNotFoundError("Runtime not found where it is expected.")
 
-        license = op.join(prefix, version, license)
-        print("Runtime succesfully installed at:", op.join(prefix, version))
-        print("License agreement available at:", license)
+    # --- patch --------------------------------------------------------
+    if arch[:3] == "mac" and patch is not False:
+        auto_patch = auto_answer and patch
+        yesno = askuser(f"Patch runtime {url}?", "yes", auto_patch)
+        if yesno:
+            patch_runtime(op.join(prefix, version))
+
+    # --- goodbye ------------------------------------------------------
+    license = op.join(prefix, version, license)
+    print("Runtime succesfully installed at:", op.join(prefix, version))
+    print("License agreement available at:", license)
 
     # --- all done! ----------------------------------------------------
     return

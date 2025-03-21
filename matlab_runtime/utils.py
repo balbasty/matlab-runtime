@@ -4,10 +4,13 @@ import platform
 import shutil
 import stat
 import sys
+import tempfile
 import zipfile
+import tarfile
 from datetime import datetime
 from urllib import error, parse, request
 from xml.etree import ElementTree
+
 
 # ----------------------------------------------------------------------
 #   EXCEPTIONS
@@ -132,6 +135,94 @@ def url_download(url, out, retry=5):
     return out
 
 
+_HOMEBREW_VERSIONS = {"openssl": "3.4.1"}
+_HOMEBREW_DIGESTS = {
+    "openssl": {
+        "3.4.1": {
+            "maca64": {
+                15: "b20c7d9b63e7b320cba173c11710dee9888c77175a841031d7a245bb37355b98",  # noqa: E501
+                14: "cdc22c278167801e3876a4560eac469cfa7f86c6958537d84d21bda3caf6972c",  # noqa: E501
+                13: "51383da8b5d48f24b1d7a7f218cce1e309b6e299ae2dc5cfce5d69ff90c6e629",  # noqa: E501
+            },
+            "maci64": {
+                15: "e8a8957f282b27371283b8c7a17e743c1c4e4e242ea7ee68bbe23f883da4948f",  # noqa: E501
+                14: "36a85e5161befce49de6e03c5f710987bd5778a321151e011999e766249e6447",  # noqa: E501
+                13: "523d64d10d1d44d6e39df3ced3539e2526357eab8573d2de41d4e116d7c629c8",  # noqa: E501
+            },
+        }
+    }
+}
+
+
+def download_bottle(package, version=None, digest=None, variant=None, out="."):
+    # Download a Homebrew bottle (= build package)
+    headers = (
+        ("Authorization", "Bearer QQ=="),
+        ("Accept", "application/vnd.oci.image.layer.v1.tar+gzip"),
+    )
+    opener = request.build_opener()
+    opener.addheaders = headers
+    request.install_opener(opener)
+
+    try:
+        arch = guess_arch()
+        macver = macos_version()[0]
+        version = version or _HOMEBREW_VERSIONS[package]
+        if not digest:
+            digesters = _HOMEBREW_DIGESTS[package][version][arch]
+            if macver not in digesters:
+                if macver < min(digesters):
+                    digest = digesters[min(digesters)]
+                elif macver > max(digesters):
+                    digest = digesters[max(digesters)]
+                else:
+                    assert False
+            else:
+                digest = digesters[macver]
+
+        if variant:
+            package_path = f"{package}/{variant}"
+        else:
+            package_path = package
+        url = f"https://ghcr.io/v2/homebrew/core/{package_path}/blobs/sha256:{digest}"  # noqa: E501
+        name = f"{package}-{version}.bottle.tar.gz"
+        if op.isdir(out):
+            out = op.join(out, name)
+        return url_download(url, out)
+
+    finally:
+        request.install_opener(None)
+
+
+def patch_libcrypto(matlab_path):
+    # Required on MacOS
+    arch = guess_arch()
+    libcrypto_path = op.join(matlab_path, "bin", arch, "libcrypto.3.dylib")
+
+    version = _HOMEBREW_VERSIONS["openssl"]
+
+    shutil.move(libcrypto_path, libcrypto_path + ".tmp", )
+    try:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            gzipfile = download_bottle("openssl", variant="3", out=tmpdir)
+            with tarfile.open(gzipfile, "r:gz") as f:
+                f.extractall(tmpdir)
+            libcrypto_path_new = op.join(
+                tmpdir, "openssl@3", version, "lib", "libcrypto.3.dylib"
+            )
+            shutil.move(libcrypto_path_new, libcrypto_path)
+
+    except Exception:
+        shutil.move(libcrypto_path + ".tmp", libcrypto_path)
+        raise
+
+
+def patch_runtime(matlab_path):
+    arch = guess_arch()
+    if arch[:3] == "mac":
+        patch_libcrypto(matlab_path)
+
+
 # ----------------------------------------------------------------------
 #   SYSTEM/ARCH
 # ----------------------------------------------------------------------
@@ -195,7 +286,7 @@ def guess_prefix():
     arch = guess_arch()
     if arch[:3] == "win":
         return "C:\\Program Files\\MATLAB\\MATLAB Runtime\\"
-    if arch[:4] == "glnx":
+    if arch[:] == "gln":
         return "/usr/local/MATLAB/MATLAB_Runtime"
     if arch[:3] == "mac":
         return "/Applications/MATLAB/MATLAB_Runtime"
@@ -230,7 +321,7 @@ def find_runtime(version, prefix=None):
             "C:\\Program Files\\MATLAB\\{release}"
             "C:\\Program Files (x86)\\MATLAB\\{release}"
         ]
-    elif arch[:4] == "glnx":
+    elif arch[:3] == "gln":
         bases = [
             "/usr/local/MATLAB/MATLAB_Runtime/{release}"
             "/usr/local/MATLAB/{release}"
