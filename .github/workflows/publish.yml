@@ -6,6 +6,7 @@ on:
         description: 'Commit / Branch / Tag / SHA to checkout'
         required: false
         default: ''
+        type: string
   workflow_call:
     inputs:
       checkout:
