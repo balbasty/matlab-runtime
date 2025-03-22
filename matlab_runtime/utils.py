@@ -352,7 +352,7 @@ def guess_prefix():
     arch = guess_arch()
     if arch[:3] == "win":
         return "C:\\Program Files\\MATLAB\\MATLAB Runtime\\"
-    if arch[:] == "gln":
+    if arch[:3] == "gln":
         return "/usr/local/MATLAB/MATLAB_Runtime"
     if arch[:3] == "mac":
         return "/Applications/MATLAB/MATLAB_Runtime"
