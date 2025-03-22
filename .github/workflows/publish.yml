@@ -1,3 +1,11 @@
+# NOTE
+#   This cannot be a reusable workflow, as trusted publishing requires
+#   "permissions: id-token: write" and this is forbidden for
+#   reusable workfows.
+#   This workflow is therefore generally not used. Instead, we use
+#   publish_on_release which contains the same steps, but is triggered
+#   by a release.
+
 name: Publish to PyPI
 on:
   workflow_dispatch:
@@ -7,21 +15,13 @@ on:
         required: false
         default: ''
         type: string
-  # workflow_call:
-  #   inputs:
-  #     checkout:
-  #       description: 'Commit / Branch / Tag / SHA to checkout'
-  #       required: false
-  #       default: ''
-  #       type: string
 
 jobs:
   publish-pypi:
     runs-on: ubuntu-latest
 
-    # environment:
-    #   name: pypi
-    #   url: https://pypi.org/p/matlab-runtime
+    permissions:
+      id-token: write
 
     steps:
       - name: Set up Python ${{ inputs.python-version }}
@@ -44,12 +44,3 @@ jobs:
 
       - name: Publish distribution 📦 to Test PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          # password: ${{ secrets.PYPI_TEST_TOKEN }}
-          repository-url: https://test.pypi.org/legacy/
-
-      # - name: Publish distribution 📦 to PyPI
-      #   uses: pypa/gh-action-pypi-publish@release/v1
-      #   with:
-      #     password: ${{ secrets.PYPI_TOKEN }}
-      #     repository-url: https://upload.pypi.org/legacy/
