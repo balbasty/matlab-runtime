@@ -5,7 +5,7 @@ on:
   push:
     paths:
       - tests/**
-      - matlab_runtime_installer/**
+      - matlab_runtime/**
       - setup.py
       - pyproject.toml
   pull_request:
