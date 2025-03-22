@@ -38,6 +38,8 @@ def _make_parser():
         "https://mathworks.com/help/compiler/install-the-matlab-runtime.html"
     )
     p.add_argument("-y", "--yes", action="store_true", help=_)
+    _ = "Patch the runtime if needed."
+    p.add_argument("-p", "--patch", action="store_true", help=_)
     return p
 
 
@@ -154,7 +156,6 @@ def mwpython2(args=None):
     python_home = sys.prefix
     python_libdir = op.join(python_home, "lib")
     python_version = f"{sys.version_info.major}.{sys.version_info.minor}"
-    mwpython_app = f"{exe_dir}/{arch}/mwpython.app/Contents/MacOS/mwpython"
 
     supported_python_versions = SUPPORTED_PYTHON_VERSIONS[variant]
     if python_version not in supported_python_versions:
@@ -212,6 +213,19 @@ def mwpython2(args=None):
 
     if verbose:
         print(f"PYTHONPATH is {PYTHONPATH}")
+
+    # --- mwpython app -------------------------------------------------
+    maybe_mwpython_apps = [
+        f"{exe_dir}/{arch}/mwpython.app/Contents/MacOS/mwpython",
+        f"{exe_dir}/{arch}/mwpython{python_version}.app/Contents/MacOS/"
+        f"mwpython{python_version}",
+    ]
+    mwpython_app = None
+    for maybe_mwpython_app in maybe_mwpython_apps:
+        if op.exists(maybe_mwpython_app):
+            mwpython_app = maybe_mwpython_app
+    if not mwpython_app:
+        raise RuntimeError("Failed to locate mwpython")
 
     # --- subprocess ---------------------------------------------------
     flag_and_ver = ["-mwpythonver", python_version]
