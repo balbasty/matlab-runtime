@@ -23,9 +23,6 @@ jobs:
       name: pypi
       url: https://pypi.org/p/matlab-runtime
 
-    permissions:
-      id-token: write
-
     steps:
       - name: Set up Python ${{ inputs.python-version }}
         uses: actions/setup-python@v5
