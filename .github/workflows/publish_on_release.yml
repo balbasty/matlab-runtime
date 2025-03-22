@@ -1,4 +1,4 @@
-name: Publish to PyPI when publishing a GH release
+name: Publish to PyPI on release
 on:
   release:
     types: [published]
