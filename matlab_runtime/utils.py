@@ -212,9 +212,9 @@ def patch_libcrypto(matlab_path):
             )
             shutil.move(libcrypto_path_new, libcrypto_path)
 
-    except Exception:
+    except Exception as e:
         shutil.move(libcrypto_path + ".tmp", libcrypto_path)
-        raise
+        raise e
 
 
 def patch_runtime(matlab_path):
@@ -264,13 +264,14 @@ def macos_version():
     ver = tuple(map(int, ver.split(".")))
     return ver
 
+
 CANDIDATE_LOCATIONS_BY_OS = {
     "win": [
-        "C:\\Program Files (x86)\\MATLAB\\MATLAB Runtime\\{release}",
         "C:\\Program Files\\MATLAB\\MATLAB Runtime\\{release}",
+        "C:\\Program Files (x86)\\MATLAB\\MATLAB Runtime\\{release}",
         "C:\\Program Files\\MATLAB\\{release}",
         "C:\\Program Files (x86)\\MATLAB\\{release}",
-    ], 
+    ],
     "gln": [
         "/usr/local/MATLAB/MATLAB_Runtime/{release}",
         "/usr/local/MATLAB/{release}"
@@ -282,9 +283,10 @@ CANDIDATE_LOCATIONS_BY_OS = {
     ]
 }
 
+
 def iter_existing_installations(variant='latest_installed'):
-    """ 
-    Iterate over MATLAB and MATLAB Runtime installations in common location. 
+    """
+    Iterate over MATLAB and MATLAB Runtime installations in common location.
 
     If variant is "latest_installed", the function will return the latest
     installed version. Otherwise, it will return the versions that
@@ -292,7 +294,7 @@ def iter_existing_installations(variant='latest_installed'):
 
     Yields
     ------
-    path : str 
+    path : str
         Path to the installation
     variant : str
         Version of the installation
@@ -308,21 +310,25 @@ def iter_existing_installations(variant='latest_installed'):
 
     if variant == "latest_installed":
         pattern = re.compile(r"R\d{4}[ab]")
-    else: 
+    else:
         pattern = re.compile(variant)
 
     paths = []
     for base in bases:
         try:
-            paths.extend(glob.glob(base.format(release="*")))
+            for path in glob.glob(base.format(release="*")):
+                search = re.search(pattern, path)
+                if search:
+                    paths.append((base, path, search.group()))
         except FileNotFoundError:
             continue
 
-    for name in sorted(paths, reverse=True):
-        search = re.search(pattern, name)
-        if search:
-            yield op.join(base, name), search.group()
-    
+    def sort_paths(path_tuple):
+        return (path_tuple[2], bases[::-1].index(path_tuple[0]))
+
+    for _, path, ver in sorted(paths, reverse=True, key=sort_paths):
+        yield path, ver
+
 
 def guess_prefix():
     """
@@ -342,7 +348,7 @@ def guess_prefix():
     """
     if os.environ.get("MATLAB_RUNTIME_PATH", ""):
         return os.environ["MATLAB_RUNTIME_PATH"]
-    
+
     arch = guess_arch()
     if arch[:3] == "win":
         return "C:\\Program Files\\MATLAB\\MATLAB Runtime\\"

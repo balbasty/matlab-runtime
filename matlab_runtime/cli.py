@@ -7,8 +7,7 @@ from .impl import install, uninstall
 from .utils import (
   guess_arch,
   guess_prefix,
-  guess_release,
-  iter_existing_installations, 
+  iter_existing_installations,
   SUPPORTED_PYTHON_VERSIONS,
 )
 
@@ -139,13 +138,15 @@ def mwpython2(args=None):
         if op.exists(op.join(path, "bin", 'mwpython')):
             exe_dir = op.join(path, "bin")
             variant = ver
-            if verbose: 
+            if verbose:
                 print(f"Found mwpython for MATLAB {variant} at {exe_dir}")
             break
     if exe_dir is None:
-        raise RuntimeError("No MATLAB Runtime found. If you have installed"
-        " Matlab Runtime in an unusual location, please set the "
-        "MATLAB_RUNTIME_PATH environment variable to the path of the installation.")
+        raise RuntimeError(
+            "No MATLAB Runtime found. If you have installed Matlab Runtime "
+            "in an unusual location, please set the MATLAB_RUNTIME_PATH "
+            "environment variable to the path of the installation."
+        )
 
     # --- PYTHONHOME ---------------------------------------------------
 
