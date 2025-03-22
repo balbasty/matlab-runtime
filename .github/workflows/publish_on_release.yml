@@ -10,6 +10,7 @@ jobs:
       checkout: ${{ github.ref }}
 
   publish-pypi:
+    needs: run-tests
     runs-on: ubuntu-latest
 
     permissions:
