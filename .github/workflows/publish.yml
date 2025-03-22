@@ -17,6 +17,8 @@ on:
 
 jobs:
   publish-pypi:
+    runs-on: ubuntu-latest
+
     steps:
       - name: Set up Python ${{ inputs.python-version }}
         uses: actions/setup-python@v5
