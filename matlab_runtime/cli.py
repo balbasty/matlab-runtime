@@ -50,7 +50,7 @@ def main(args=None):
     if p.uninstall:
         uninstall(p.version, p.prefix, p.yes)
     else:
-        install(p.version, p.prefix, p.yes)
+        install(p.version, p.prefix, p.yes, p.patch)
 
 
 # --- mwpython2 --------------------------------------------------------

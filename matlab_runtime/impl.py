@@ -171,12 +171,12 @@ def install(version=None, prefix=None, auto_answer=False, patch=None):
             print("done ->", op.join(prefix, version))
 
     # --- check --------------------------------------------------------
-    path_installed = op.join(prefix, version)
-    if not op.exists(op.join(path_installed, "VersionInfo.xml")):
-        if op.exists(path_installed):
+    path = op.join(prefix, version)
+    if not op.exists(op.join(path, "VersionInfo.xml")):
+        if op.exists(path):
             print(
                 "Runtime not found where it is expected (v):",
-                os.listdir(path_installed)
+                os.listdir(path)
             )
         elif op.exists(prefix):
             print(
@@ -187,8 +187,11 @@ def install(version=None, prefix=None, auto_answer=False, patch=None):
 
     # --- patch --------------------------------------------------------
     if arch[:3] == "mac" and patch is not False:
-        auto_patch = auto_answer and patch
-        yesno = askuser(f"Patch runtime {url}?", "yes", auto_patch)
+        if patch is None:
+            yesno = askuser(f"Patch runtime {path}?", "no", auto_answer)
+        else:
+            print(f"Patch runtime {path}")
+            yesno = True
         if yesno:
             patch_runtime(op.join(prefix, version))
 
