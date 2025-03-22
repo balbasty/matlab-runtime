@@ -47,6 +47,8 @@ options:
                     WITH THE ARGUMENT `-agreeToLicense yes`.
                     IF YOU ARE NOT WILLING TO DO SO, DO NOT CALL THIS FUNCTION.
                     https://mathworks.com/help/compiler/install-the-matlab-runtime.html
+
+  -p, --patch       Patch the runtime if needed.
 ```
 
 ## Python API
@@ -208,6 +210,8 @@ def import_deployed(*packages):
 
 ### MacOS
 
+#### `mwpython2`
+
 The MATLAB SDK cannot be used with the normal python interpreter on MacOS.
 Instead, the MATLAB runtime ships with its own interpreter called `mwpython`.
 
@@ -221,3 +225,33 @@ installed with this package. It does solve the conda environement issue.
 
 That said, the `matplotlib` package still cannot be used with this wrapper
 (nor can it be used with `mwpython`).
+
+#### Jupyter + libcrypto
+
+When running jupyter, you may face an error related to `libcrypto.3.dylib`.
+If this happens, you may want to try running the runtime installation
+with the `--patch` option (or `patch=True`). **Warning:** this option
+modifies files whithin the MATLAB runtime installation folder, which
+may have unexpected effects. This is not a robust/thoroughly tested fix.
+
+#### Jupyter + `mwpython2`
+
+By default, jupyter runs its kernel through the "normal" python interpreter.
+In order to use the MATLAB packages in the kernel, it is necessary to
+inform jupyter that it should run its kernels through `mwpython2`.
+
+To do so, locate the kernel file(s), usually at
+`/Users/{username}/Library/Jupyter/kernels/{kernel_name}/kernel.json`, and
+replace the path to the default interpreter (_e.g._,
+`"/Users/{username}/miniforge3/envs/{env_name}/bin/python"`) with the path
+to `mwpython2` (_e.g._,
+`"/Users/{username}/miniforge3/envs/{env_name}/bin/mwpython2"`).
+
+If you cannot locate the kerenel file, install the kernel
+by running:
+
+```shell
+mwpython2 -m ipykernel install --user --name {kernel_name}
+```
+
+You may need to install `ipykernel` beforehand.
