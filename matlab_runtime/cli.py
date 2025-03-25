@@ -39,7 +39,7 @@ def _make_parser():
     )
     p.add_argument("-y", "--yes", action="store_true", help=_)
     _ = "Patch the runtime if needed."
-    p.add_argument("-p", "--patch", action="store_true", help=_)
+    p.add_argument("-x", "--patch", action="store_true", help=_)
     return p
 
 
