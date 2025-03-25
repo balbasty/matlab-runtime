@@ -48,7 +48,7 @@ options:
                     IF YOU ARE NOT WILLING TO DO SO, DO NOT CALL THIS FUNCTION.
                     https://mathworks.com/help/compiler/install-the-matlab-runtime.html
 
-  -p, --patch       Patch the runtime if needed.
+  -x, --patch       Patch the runtime if needed.
 ```
 
 ## Python API
