@@ -43,9 +43,11 @@ def askuser(question, default="yes", auto_answer=False, raise_if_no=False):
     if auto_answer:
         yesno = True if default == "yes" else False
     else:
-        yesno = input(f"{question} {options}").strip()
-        yesno = (not yesno) if default == "yes" else False
-        yesno = yesno or yesno[:1].lower() == "y"
+        yesno = input(f"{question} {options} ").strip()
+        if not yesno:
+            yesno = True if default == "yes" else False
+        else:
+            yesno = yesno[:1].lower() == "y"
     if not yesno and raise_if_no:
         raise UserInterruptionError(question)
     return yesno
