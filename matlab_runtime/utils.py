@@ -1,3 +1,4 @@
+import json
 import os
 import os.path as op
 import platform
@@ -495,6 +496,7 @@ def matlab_version(version):
 def guess_release(version, arch=None, prefix=None):
     """Guess version (if "latest") + convert to MATLAB release (e.g. R2024b)"""
     arch = arch or guess_arch()
+
     if version.lower() == "latest_installed":
         if prefix is None:
             prefix = guess_prefix()
@@ -507,115 +509,30 @@ def guess_release(version, arch=None, prefix=None):
 
     elif version.lower() == "latest":
 
-        year = str(datetime.now().year)
-        for letter in ("b", "a"):
-            maybe_version = "R" + year + letter
-            try:
-                guess_installer(maybe_version)
-                version = maybe_version
+        # Find most recent version
+        year = datetime.now().year
+        while year >= 2012:
+            for letter in ("b", "a"):
+                maybe_version = "R" + str(year) + letter
+                try:
+                    guess_installer(maybe_version)
+                    version = maybe_version
+                    break
+                except VersionNotFoundError:
+                    continue
+            if version.lower() != "latest":
                 break
-            except VersionNotFoundError:
-                continue
-        if version == "latest":
-            # No version found for current year, use latest known version
-            version = next(iter(
-                sorted(INSTALLERS[arch].keys(), reverse=True)
-            ))
+            year -= 1
+
+        assert version.lower() != "latest", "Could not find any version ???"
 
     return matlab_release(version)
 
 
-def guess_installer(version, arch=None):
-    """Find installer URL from version or release, for an arch."""
-    arch = arch or guess_arch()
-    error = VersionNotFoundError(f"No {version} installer found for Win{arch}")
-    version = matlab_release(version)
-    if version in INSTALLERS[arch]:
-        return INSTALLERS[arch][version]
-    else:
-        A, R, E = arch, version, "zip"
-        fmt = dict(release=R, arch=A, ext=E)
-        for U in reversed(range(11)):
-            maybe_installer = TEMPLATE2.format(update=U, **fmt)
-            if url_exists(maybe_installer):
-                INSTALLERS[A][R] = maybe_installer
-                return maybe_installer
-        raise error
-
-
 # ----------------------------------------------------------------------
-#   KNOWN VERSIONS AND OTHER INFO
+#   RETRIEVE INSTALLERS
 # ----------------------------------------------------------------------
 
-
-VERSION_TO_RELEASE = {
-    # Starting with R2023b, the version scheme matches the release scheme,
-    # i.e., 23.2 === R2023b.
-    # This dictionary contains a "version to release" map for
-    # releases prior to R2023b.
-    "9.14": "R2023a",
-    "9.13": "R2022b",
-    "9.12": "R2022a",
-    "9.11": "R2021b",
-    "9.10": "R2021a",
-    "9.9": "R2020b",
-    "9.8": "R2020a",
-    "9.7": "R2019b",
-    "9.6": "R2019a",
-    "9.5": "R2018b",
-    "9.4": "R2018a",
-    "9.3": "R2017b",
-    "9.2": "R2017a",
-    "9.1": "R2016b",
-    "9.0.1": "R2016a",
-    "9.0": "R2015b",
-    "8.5.1": "R2015aSP1",
-    "8.5": "R2015a",
-    "8.4": "R2014b",
-    "8.3": "R2014a",
-    "8.2": "R2013b",
-    "8.1": "R2013a",
-    "8.0": "R2012b",
-    "7.17": "R2012a",
-}
-
-RELEASE_TO_UPDATE = {
-    "R2024b": "5",
-    "R2024a": "7",
-    "R2023b": "10",
-    "R2023a": "7",
-    "R2022b": "10",
-    "R2022a": "8",
-    "R2021b": "7",
-    "R2021a": "8",
-    "R2020b": "8",
-    "R2020a": "8",
-    "R2019b": "9",
-    "R2019a": "9",
-}
-
-SUPPORTED_PYTHON_VERSIONS = {
-    "R2024b": ("3.9", "3.10", "3.11", "3.12"),
-    "R2024a": ("3.9", "3.10", "3.11"),
-    "R2023b": ("3.9", "3.10", "3.11"),
-    "R2023a": ("3.8", "3.9", "3.10"),
-    "R2022b": ("2.7", "3.8", "3.9", "3.10"),
-    "R2022a": ("2.7", "3.8", "3.9"),
-    "R2021b": ("2.7", "3.7", "3.8", "3.9"),
-    "R2021a": ("2.7", "3.7", "3.8"),
-    "R2020b": ("2.7", "3.6", "3.7", "3.8"),
-    "R2020a": ("2.7", "3.6", "3.7"),
-    "R2019b": ("2.7", "3.6", "3.7"),
-    "R2019a": ("2.7", "3.5", "3.6", "3.7"),
-    "R2018b": ("2.7", "3.5", "3.6"),
-    "R2018a": ("2.7", "3.5", "3.6"),
-    "R2017b": ("2.7", "3.4", "3.5", "3.6"),
-    "R2017a": ("2.7", "3.4", "3.5"),
-    "R2016b": ("2.7", "3.3", "3.4", "3.5"),
-    "R2016a": ("2.7", "3.3", "3.4"),
-    "R2015b": (),
-    "R2015a": ("2.7", "3.3", "3.4"),
-}
 
 INSTALLERS = {
     "win64": {},        # Windows 64 bits
@@ -629,10 +546,15 @@ INSTALLERS = {
 # Links @ https://uk.mathworks.com/products/compiler/matlab-runtime.html
 
 # Links for releases >= R2019a
-TEMPLATE2 = (
+TEMPLATE2_UPDATE = (
     "https://ssd.mathworks.com/supportfiles/downloads/{release}"
     "/Release/{update}/deployment_files/installer/complete/{arch}"
     "/MATLAB_Runtime_{release}_Update_{update}_{arch}.{ext}"
+)
+TEMPLATE2 = (
+    "https://ssd.mathworks.com/supportfiles/downloads/{release}"
+    "/Release/{update}/deployment_files/installer/complete/{arch}"
+    "/MATLAB_Runtime_{release}_{arch}.{ext}"
 )
 # Links for releases < R2019a
 TEMPLATE1 = (
@@ -647,67 +569,121 @@ TEMPLATE1 = (
 #   allows an archive that contain a binary installer to be obtained.
 #   We need this installer to be able to pass command line arguments.
 
-# ----------------------------------------------------------------------
-#   WINDOWS INSTALLERS
-# ----------------------------------------------------------------------
+
+def guess_installer(release, arch=None, max_update=10):
+    """Find installer URL from version or release, for an arch."""
+    A = arch or guess_arch()
+    R = matlab_release(release)
+    Y = int(release[3:5])
+    E = "zip"
+
+    if R in INSTALLERS[A]:
+        return INSTALLERS[A][R]
+
+    U = RELEASE_TO_UPDATE.get(R, "0")
+
+    def not_available():
+        raise VersionNotFoundError(
+            f"Installer not available for MATLAB {R} on {A}"
+        )
+
+    def url1():
+        E = "exe" if A in ("win32", "win64") else "zip"
+        return TEMPLATE1.format(release=R, arch=A, ext=E)
+
+    def url2():
+        # We know that this installer exists
+        tpl = TEMPLATE2_UPDATE if U != "0" else TEMPLATE2
+        url = tpl.format(release=R, update=U, arch=A, ext=E)
+        if not url_exists(url):
+            not_available()
+
+        # Try to find a more recent update if possible
+        maybe_u = int(U)
+        while True:
+            maybe_u += 1
+            tpl = TEMPLATE2_UPDATE
+            maybe_url = tpl.format(release=R, update=maybe_u, arch=A, ext=E)
+            if url_exists(url):
+                url = maybe_url
+            else:
+                break
+
+        return url
+
+    if A == "win64":
+        if Y < 12:
+            not_available()
+        elif Y < 19:
+            E = "exe"
+            INSTALLERS[A][R] = url1()
+        else:
+            INSTALLERS[A][R] = url2()
+
+    elif A == "win32":
+        if 12 <= Y < 16:
+            INSTALLERS[A][R] = url1()
+        else:
+            not_available()
+
+    elif A == "glnxa64":
+        if Y < 12:
+            not_available()
+        elif Y < 19:
+            INSTALLERS[A][R] = url1()
+        else:
+            INSTALLERS[A][R] = url2()
+
+    elif A == "glnx86":
+        if R == "2012a":
+            INSTALLERS[A][R] = url1()
+        else:
+            not_available()
+
+    elif A == "maci64":
+        if Y < 12:
+            not_available()
+        elif Y < 19:
+            INSTALLERS[A][R] = url1()
+        else:
+            INSTALLERS[A][R] = url2()
+
+    elif A == "maca64":
+        if R == "2023b" or Y > 23:
+            INSTALLERS[A][R] = url2()
+        else:
+            not_available()
+
+    else:
+        raise ValueError(f"Arch not supported: {A}")
+
+    return INSTALLERS[A][R]
 
 
-A = "win64"
-E = "zip"
-for R, U in RELEASE_TO_UPDATE.items():
-    INSTALLERS[A][R] = TEMPLATE2.format(release=R, update=U, arch=A, ext=E)
-
-E = "exe"
-for Y in range(12, 19):
-    for R in ("a", "b"):
-        R = f"R20{Y}{R}"
-        INSTALLERS[A][R] = TEMPLATE1.format(release=R, arch=A, ext=E)
-
-A = "win32"
-E = "exe"
-for Y in range(12, 16):
-    for R in ("a", "b"):
-        R = f"R20{Y}{R}"
-        INSTALLERS[A][R] = TEMPLATE1.format(release=R, arch=A, ext=E)
+def _get_matlab_info_from_web():
+    URL = (
+        "https://raw.githubusercontent.com/balbasty/matlab-runtime/"
+        "refs/heads/main/matlab_runtime/info.json"
+    )
+    content = None
+    with request.urlopen(URL) as response:
+        content = response.read().decode("utf-8")
+    return json.loads(content)
 
 
-# ----------------------------------------------------------------------
-#   LINUX INSTALLERS
-# ----------------------------------------------------------------------
+def _get_matlab_info_from_file():
+    PATH = op.join(op.dirname(__file__), "info.json")
+    with open(PATH) as content:
+        return json.load(content)
 
 
-A = "glnxa64"
-E = "zip"
-for R, U in RELEASE_TO_UPDATE.items():
-    INSTALLERS[A][R] = TEMPLATE2.format(release=R, update=U, arch=A, ext=E)
-
-for Y in range(12, 19):
-    for R in ("a", "b"):
-        R = f"R20{Y}{R}"
-        INSTALLERS[A][R] = TEMPLATE1.format(release=R, arch=A, ext=E)
-
-A = "glnx86"
-E = "zip"
-INSTALLERS[A]["R2012a"] = TEMPLATE1.format(release=R, arch=A, ext=E)
-
-
-# ----------------------------------------------------------------------
-#   MACOS INSTALLERS
-# ----------------------------------------------------------------------
-
-
-A = "maci64"
-E = "zip"
-for R, U in RELEASE_TO_UPDATE.items():
-    INSTALLERS[A][R] = TEMPLATE2.format(release=R, update=U, arch=A, ext=E)
-
-for Y in range(12, 19):
-    for R in ("a", "b"):
-        R = f"R20{Y}{R}"
-        INSTALLERS[A][R] = TEMPLATE1.format(release=R, arch=A, ext=E)
-
-A = "maca64"
-E = "zip"
-for R in ("R2023b", "R2024a", "R2024b"):
-    U = RELEASE_TO_UPDATE[R]
-    INSTALLERS[A][R] = TEMPLATE2.format(release=R, update=U, arch=A, ext=E)
+try:
+    info = _get_matlab_info_from_web()
+    VERSION_TO_RELEASE = info["VERSION_TO_RELEASE"]
+    SUPPORTED_PYTHON_VERSIONS = info["SUPPORTED_PYTHON_VERSIONS"]
+    RELEASE_TO_UPDATE = info["RELEASE_TO_UPDATE"]
+except Exception:
+    info = _get_matlab_info_from_file()
+    VERSION_TO_RELEASE = info["VERSION_TO_RELEASE"]
+    SUPPORTED_PYTHON_VERSIONS = info["SUPPORTED_PYTHON_VERSIONS"]
+    RELEASE_TO_UPDATE = info["RELEASE_TO_UPDATE"]
