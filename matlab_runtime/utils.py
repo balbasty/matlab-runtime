@@ -604,7 +604,7 @@ def guess_installer(release, arch=None, max_update=10):
             maybe_u += 1
             tpl = TEMPLATE2_UPDATE
             maybe_url = tpl.format(release=R, update=maybe_u, arch=A, ext=E)
-            if url_exists(url):
+            if url_exists(maybe_url):
                 url = maybe_url
             else:
                 break
