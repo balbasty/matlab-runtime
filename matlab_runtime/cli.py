@@ -3,6 +3,7 @@ import os
 import os.path as op
 import subprocess
 import sys
+import glob
 from .impl import install, uninstall
 from .utils import (
   guess_arch,
@@ -210,13 +211,16 @@ def mwpython2(args=None):
     else:
         DYLD_INSERT_LIBRARIES = [] 
     # Add the Python library to the list of libraries to be loaded
-    preloaded_libs = ["libssl.dylib", "libcrypto.dylib"]
-    for lib in preloaded_libs:
-        lib_path = op.join(python_libdir, lib)
-        if op.exists(lib_path):
-            DYLD_INSERT_LIBRARIES.append(lib_path)
-            if verbose:
-                print(f"Adding {lib} to DYLD_INSERT_LIBRARIES")
+    preloaded_libs = ["libssl", "libcrypto"]
+    prefixes = ['/opt/homebrew', '/usr/local', '/usr', python_home]
+    for prefix in prefixes:
+        for lib in preloaded_libs:
+            lib_paths = glob.glob(f"{prefix}/**/{lib}.dylib", recursive=True)  
+            for lib_path in lib_paths:
+                if op.exists(lib_path):
+                    DYLD_INSERT_LIBRARIES.append(lib_path)
+                    if verbose:
+                        print(f"Adding {lib} to DYLD_INSERT_LIBRARIES")
     DYLD_INSERT_LIBRARIES = os.pathsep.join(DYLD_INSERT_LIBRARIES)
     ENV["DYLD_INSERT_LIBRARIES"] = DYLD_INSERT_LIBRARIES
 
