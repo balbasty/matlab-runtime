@@ -200,6 +200,26 @@ def mwpython2(args=None):
     if verbose:
         print(f"DYLD_FALLBACK_LIBRARY_PATH is {DYLD_FALLBACK_LIBRARY_PATH}")
 
+    # --- DYLD_INSERT_LIBRARIES --------------------------------------
+    if verbose:
+        print("Setting up environment variable DYLD_INSERT_LIBRARIES")
+
+    DYLD_INSERT_LIBRARIES = ENV.get("DYLD_INSERT_LIBRARIES")
+    if DYLD_INSERT_LIBRARIES:
+        DYLD_INSERT_LIBRARIES = DYLD_INSERT_LIBRARIES.split(os.pathsep)
+    else:
+        DYLD_INSERT_LIBRARIES = [] 
+    # Add the Python library to the list of libraries to be loaded
+    preloaded_libs = ["libssl.dylib", "libcrypto.dylib"]
+    for lib in preloaded_libs:
+        lib_path = op.join(python_libdir, lib)
+        if op.exists(lib_path):
+            DYLD_INSERT_LIBRARIES.append(lib_path)
+            if verbose:
+                print(f"Adding {lib} to DYLD_INSERT_LIBRARIES")
+    DYLD_INSERT_LIBRARIES = os.pathsep.join(DYLD_INSERT_LIBRARIES)
+    ENV["DYLD_INSERT_LIBRARIES"] = DYLD_INSERT_LIBRARIES
+
     # --- PYTHONPATH ---------------------------------------------------
 
     PYTHONPATH = ENV.get("PYTHONPATH")
