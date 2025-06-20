@@ -205,14 +205,12 @@ def mwpython2(args=None):
     if verbose:
         print("Setting up environment variable DYLD_INSERT_LIBRARIES")
 
-    DYLD_INSERT_LIBRARIES = ENV.get("DYLD_INSERT_LIBRARIES")
-    if DYLD_INSERT_LIBRARIES:
-        DYLD_INSERT_LIBRARIES = DYLD_INSERT_LIBRARIES.split(os.pathsep)
-    else:
-        DYLD_INSERT_LIBRARIES = [] 
+    DYLD_INSERT_LIBRARIES = [] 
+
     # Add the Python library to the list of libraries to be loaded
     preloaded_libs = ["libssl", "libcrypto"]
-    prefixes = ['/opt/homebrew', '/usr/local', '/usr', python_home]
+    prefixes = ['/opt/homebrew/Cellar/openssl*/**/lib', '/usr/local/opt/openssl*/**/lib', python_home]
+    found = False
     for prefix in prefixes:
         for lib in preloaded_libs:
             lib_paths = glob.glob(f"{prefix}/**/{lib}.dylib", recursive=True)  
@@ -221,6 +219,11 @@ def mwpython2(args=None):
                     DYLD_INSERT_LIBRARIES.append(lib_path)
                     if verbose:
                         print(f"Adding {lib} to DYLD_INSERT_LIBRARIES")
+                    found = True
+                    break
+        if found:
+            break
+                
     DYLD_INSERT_LIBRARIES = os.pathsep.join(DYLD_INSERT_LIBRARIES)
     ENV["DYLD_INSERT_LIBRARIES"] = DYLD_INSERT_LIBRARIES
 
