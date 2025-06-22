@@ -56,8 +56,8 @@ def main(args=None):
 # --- mwpython2 --------------------------------------------------------
 
 
-_mwpython_help = """
-usage: mwpython2 [-verbose] [-variant vrt] [py_args] [-mlstartup opt[,opt]] [-c cmd | -m mod | scr.py]
+_mpython_help = """
+usage: mpython [-verbose] [-variant vrt] [py_args] [-mlstartup opt[,opt]] [-c cmd | -m mod | scr.py]
 
 Arguments:
     -verbose            : verbose mode
@@ -69,18 +69,18 @@ Arguments:
     scr.py [arg[,arg]]  : execute Python script scr.py
 
 Examples:
-    Execute Python script myscript.py with mwpython in verbose mode:
-        mwpython -verbose myscript.py arg1 arg2
+    Execute Python script myscript.py with mpython in verbose mode:
+        mpython -verbose myscript.py arg1 arg2
     Execute Python script myscript.py, suppressing the runtime's Java VM:
-        mwpython -mlstartup -nojvm myscript.py arg1 arg2
+        mpython -mlstartup -nojvm myscript.py arg1 arg2
     Execute Python module mymod.py:
-        mwpython -m mymod arg1 arg2
+        mpython -m mymod arg1 arg2
     Execute Python command 'x=3;print(x)'
-        mwpython -c "'x=3;print(x)'"
+        mpython -c "'x=3;print(x)'"
 """  # noqa: E501
 
 
-def mwpython2(args=None):
+def mpython(args=None):
     # Python wrapper that replaces MathWorks's mwpython.
     # Uses DYLD_FALLBACK_LIBRARY_PATH instead of DYLD_LIBRARY_PATH.
     # Uses the calling python to determine which python to wrap.
@@ -98,7 +98,7 @@ def mwpython2(args=None):
     while args:
         arg = args.pop(0)
         if arg in ("-h", "-?", "-help"):
-            print(_mwpython_help)
+            print(_mpython_help)
             return 0
         elif arg == "-verbose":
             verbose = True
@@ -274,3 +274,7 @@ def mwpython2(args=None):
         )
     p = subprocess.run([mwpython_app, *args_and_version], **opt)
     return p.returncode
+
+
+# backward compatibility !! DO NOT REMOVE !!
+mwpython2 = mpython
