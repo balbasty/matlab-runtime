@@ -21,6 +21,7 @@ This is a small package that simply allows to
   * [API](#api)
 * [Troubleshooting](#troubleshooting)
   * [MacOS](#macos)
+  * [Windows](#windows)
 
 ## Installation
 
@@ -265,3 +266,10 @@ mpython -m ipykernel install --user --name {kernel_name}
 ```
 
 You may need to install `ipykernel` beforehand.
+
+### Windows
+
+#### `DeclarativeService.dll not found`
+
+Python installation made from Microsoft Store on Windows will not work
+(raises DeclarativeService.dll not found), install it from Python website.
