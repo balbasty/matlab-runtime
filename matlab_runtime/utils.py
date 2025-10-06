@@ -385,21 +385,21 @@ def find_runtime(version, prefix=None):
     arch = guess_arch()
     if arch[:3] == "win":
         bases = [
-            "C:\\Program Files (x86)\\MATLAB\\MATLAB Runtime\\{release}"
-            "C:\\Program Files\\MATLAB\\MATLAB Runtime\\{release}"
-            "C:\\Program Files\\MATLAB\\{release}"
+            "C:\\Program Files (x86)\\MATLAB\\MATLAB Runtime\\{release}",
+            "C:\\Program Files\\MATLAB\\MATLAB Runtime\\{release}",
+            "C:\\Program Files\\MATLAB\\{release}",
             "C:\\Program Files (x86)\\MATLAB\\{release}"
         ]
     elif arch[:3] == "gln":
         bases = [
-            "/usr/local/MATLAB/MATLAB_Runtime/{release}"
+            "/usr/local/MATLAB/MATLAB_Runtime/{release}",
             "/usr/local/MATLAB/{release}"
         ]
     elif arch[:3] == "mac":
         bases = [
-            "/Applications/MATLAB/MATLAB_Runtime/{release}"
-            "/Applications/MATLAB_{release}.app"
-            "/Applications/MATLAB_{release}"
+            "/Applications/MATLAB/MATLAB_Runtime/{release}",
+            "/Applications/MATLAB_{release}.app",
+            "/Applications/MATLAB_{release}",
             "/Applications/MATLAB/{release}"
         ]
     for base in bases:
