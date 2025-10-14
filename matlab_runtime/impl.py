@@ -447,6 +447,12 @@ def init_runtime(option_list=tuple(), error_if_already_init=False):
                 'Options "-nodisplay" and "-nojvm" are ignored on Mac.'
                 'They must be passed to mwpython in order to take effect.'
             )
+    elif arch[:3] == "gln":
+        if not os.environ.get("DISPLAY", ""):
+            # Headless environment -> ensure -nodisplay is set
+            if "-nodisplay" not in option_list:
+                option_list = (*option_list, "-nodisplay")
+
     cppext.initializeApplication(option_list)
     _INITIALIZED["RUNTIME"] = True
 
