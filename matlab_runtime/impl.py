@@ -313,6 +313,19 @@ def init(
     version = guess_release(version, arch)
     path = find_runtime(version, prefix)
 
+    # --- if already initialized: stop  --------------------------------
+    sdk_version = _INITIALIZED["SDK"]
+    if sdk_version:
+        if sdk_version != version:
+            raise ValueError(
+                f"Another version ({sdk_version}) of the MATLAB SDK has "
+                f"already been initialized, and differs from the target "
+                f"version ({version}). It is currently not possible to  "
+                f"run multiple versions of MATLAB at the same time."
+            )
+        else:
+            return
+
     # --- install version  ---------------------------------------------
     if not path:
         if install_if_missing:
@@ -357,7 +370,7 @@ def init(
             f'runtime version of previously loaded package ({current_version})'
         )
 
-    _INITIALIZED["SDK"] = True
+    _INITIALIZED["SDK"] = version
 
 
 class _PathInitializer:
@@ -367,7 +380,7 @@ class _PathInitializer:
         self.cppext_handle = importlib.import_module(_CPP)
 
 
-def import_deployed(*packages):
+def import_deployed(*packages, option_list=tuple()):
     """
     Initialize compiled MATLAB packages so that they can be used from python.
 
@@ -382,7 +395,7 @@ def import_deployed(*packages):
         Imported MATLAB modules.
     """
     if not _INITIALIZED["RUNTIME"]:
-        init_runtime()
+        init_runtime(option_list)
 
     sdk = importlib.import_module(_SDK)
 
@@ -402,7 +415,7 @@ def import_deployed(*packages):
     return handles[0] if len(handles) == 1 else tuple(handles)
 
 
-def init_runtime(option_list=tuple()):
+def init_runtime(option_list=tuple(), error_if_already_init=False):
     """
     Initialize the MATLAB runtime. The SDK must have already been initialized.
 
@@ -412,7 +425,11 @@ def init_runtime(option_list=tuple()):
         Options passed to MATLAB.
     """
     if _INITIALIZED.get("RUNTIME", False):
-        raise ValueError("MATLAB runtime already initialized")
+        if error_if_already_init:
+            raise ValueError("MATLAB runtime already initialized")
+        else:
+            return
+
     if not _INITIALIZED.get("SDK", False):
         init()
 
