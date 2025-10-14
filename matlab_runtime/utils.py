@@ -1,4 +1,5 @@
 import json
+import math
 import os
 import os.path as op
 import platform
@@ -11,6 +12,12 @@ import tarfile
 from datetime import datetime
 from urllib import error, parse, request
 from xml.etree import ElementTree
+
+
+try:
+    import tqdm
+except ImportError:
+    tqdm = None
 
 
 # ----------------------------------------------------------------------
@@ -108,6 +115,47 @@ class NoRedirection(request.HTTPErrorProcessor):
     https_response = http_response
 
 
+if tqdm:
+    def _download_hook():
+        data = {"bar": None, "nb_bytes": 0}
+
+        def callback(nb_blocks, block_size, file_size):
+            if not data["bar"]:
+                if file_size < 0:
+                    file_size = float('inf')
+                data["bar"] = tqdm.tqdm(total=file_size)
+            nb_bytes = nb_blocks * block_size
+            data["bar"].update(nb_bytes - data["nb_bytes"])
+            data["nb_bytes"] = nb_bytes
+
+        return callback, data
+else:
+    def _download_hook():
+        data = {"started": False}
+
+        def callback(nb_blocks, block_size, file_size):
+            nb_bytes = nb_blocks * block_size
+            if not data["started"]:
+                if file_size < 0:
+                    print(f"{0:>3d} B ", end="")
+                else:
+                    print(f"{0:>3d} %", end="")
+                data["started"] = True
+            if file_size < 0:
+                mag = int(math.floor(math.log2(nb_bytes)))
+                unit = ["B", "KB", "MB", "GB", "TB", "PB"]
+                unit = unit[int(math.floor(mag/3))]
+                nb_units = int(math.floor(nb_bytes / (2 ** mag)))
+                print("\b" * 6 + f"{nb_units:>3d} {unit:2s}", end="")
+            else:
+                nb_pct = int(math.floor(100 * nb_bytes / file_size))
+                print("\b" * 5 + f"{nb_pct:>3d} %", end="")
+            if nb_bytes >= file_size:
+                print("")
+
+        return callback, data
+
+
 def url_exists(url):
     opener = request.build_opener(NoRedirection)
     req = request.Request(url, method="HEAD")
@@ -119,18 +167,26 @@ def url_exists(url):
         return False
 
 
-def url_download(url, out, retry=5):
+def url_download(url, out, retry=5, verbose=True):
     if op.isdir(out):
         basename = op.basename(parse.urlparse(url).path)
         out = op.join(out, basename)
 
+    if verbose:
+        hook, hookdata = _download_hook()
+    else:
+        hook, hookdata = None, {}
+
     res = exc = None
     for _ in range(retry):
         try:
-            res = request.urlretrieve(url, out)
+            res = request.urlretrieve(url, out, hook)
             break
         except Exception as e:
             exc = e
+
+    if "bar" in hookdata:
+        hookdata["bar"].close()
 
     if res is None:
         raise DownloadError(str(exc))
