@@ -3,7 +3,6 @@ import os
 import os.path as op
 import subprocess
 import sys
-import glob
 from .impl import install, uninstall
 from .utils import (
   guess_arch,
