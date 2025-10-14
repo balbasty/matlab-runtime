@@ -69,7 +69,7 @@ def install(version=None, prefix=None, auto_answer=False, patch=None):
     """
     # --- iterate if multiple versions  --------------------------------
     if isinstance(version, (list, tuple, set)):
-        map(lambda x: install(x, prefix, auto_answer), version)
+        list(map(lambda x: install(x, prefix, auto_answer, patch), version))
         return
 
     # --- prepare  -----------------------------------------------------
