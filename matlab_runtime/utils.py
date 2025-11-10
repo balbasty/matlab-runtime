@@ -505,6 +505,7 @@ def guess_matlab_release(path):
 
 
 def _guess_matlab_version(path, key):
+    path0 = path
     while path:
         if op.exists(op.join(path, 'VersionInfo.xml')):
             path = op.join(path, 'VersionInfo.xml')
@@ -512,8 +513,13 @@ def _guess_matlab_version(path, key):
             version = tree.find(key).text
             return version
         else:
-            path = op.dirname(path)
-    raise ValueError(f"Could not guess matlab {key} from python module")
+            path, prev_path = op.dirname(path), path
+            if op.samefile(path, prev_path):
+                break
+    raise ValueError(
+        f"Could not guess matlab {key} from python module. "
+        f"Path: {path0}"
+    )
 
 
 # ----------------------------------------------------------------------
