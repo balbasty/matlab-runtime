@@ -359,12 +359,18 @@ def init(
     matlab = importlib.import_module(_MLB)
 
     # --- check version  -----------------------------------------------
-    current_version = guess_pymatlab_version(matlab)
+    try:
+        current_version = guess_pymatlab_version(matlab)
+        current_version = tuple(map(int, current_version.split(".")[:2]))
+    except ValueError:
+        current_version = None
+
     target_version = matlab_version(version)
-    current_version = tuple(map(int, current_version.split(".")[:2]))
     target_version = tuple(map(int, target_version.split(".")[:2]))
 
-    if current_version != target_version:
+    if current_version is None:
+        warnings.warn("Could not determine version of matlab-python.")
+    elif current_version != target_version:
         raise RuntimeError(
             f'Runtime version of package ({target_version}) does not match '
             f'runtime version of previously loaded package ({current_version})'
