@@ -82,8 +82,8 @@ jobs:
           names = z.namelist()
           print(len(names), "entries")
           print("\n".join(n for n in names if n.count("/") <= 1)[:5000])
-          pd = [n for n in names if "productdata" in n.lower()]
+          pd = [n for n in names if n.startswith("productdata/")]
           print("productdata entries:", pd[:50])
-          for n in [n for n in pd if not n.endswith("/")][:3]:
+          for n in [n for n in pd if n.endswith(("/35010.txt", "/35055.txt"))]:
               print("==", n)
               print(repr(z.read(n)[:1500]))

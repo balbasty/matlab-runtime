@@ -130,3 +130,14 @@ def test_cli_defaults(monkeypatch):
 def test_cli_rejects_products_on_removal():
     with pytest.raises(SystemExit):
         cli.main(["-u", "--products", "MATLAB_Runtime_Core"])
+
+
+def test_installer_products_encodings(tmp_path):
+    (tmp_path / "productdata").mkdir()
+    (tmp_path / "productdata" / "35010.txt").write_bytes(
+        "﻿name=MATLAB_Runtime_Core\r\nversion=24.2\r\n".encode("utf-8")
+    )
+    (tmp_path / "productdata" / "35055.txt").write_bytes(
+        "name=MATLAB_Runtime_Numerics\n".encode("utf-16")
+    )
+    assert installer_products(str(tmp_path)) == AVAILABLE

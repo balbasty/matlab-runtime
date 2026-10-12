@@ -346,12 +346,22 @@ def installer_products(installer_dir):
     for fname in sorted(os.listdir(productdata)):
         if not fname.endswith(".txt"):
             continue
-        with open(op.join(productdata, fname), encoding="utf-8") as f:
-            for line in f:
-                key, _, value = line.partition("=")
-                if key.strip() == "name" and value.strip():
-                    products[fname[:-4]] = value.strip()
-                    break
+        with open(op.join(productdata, fname), "rb") as f:
+            raw = f.read()
+        if raw[:2] in (b"\xff\xfe", b"\xfe\xff"):
+            text = raw.decode("utf-16", errors="replace")
+        else:
+            text = raw.decode("utf-8-sig", errors="replace")
+        entries = [
+            [part.strip() for part in line.partition("=")[::2]]
+            for line in text.splitlines() if "=" in line
+        ]
+        # The first line is usually "name=<name>"
+        names = [v for k, v in entries if k.lower() == "name" and v]
+        if not names:
+            names = [v for _, v in entries[:1] if v]
+        if names:
+            products[fname[:-4]] = names[0]
     return products
 
 
