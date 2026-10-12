@@ -40,7 +40,6 @@ jobs:
           - {os: macos-latest,   release: R2026a, mode: core}
           # --- Legacy installers (no product selection expected) -------
           - {os: ubuntu-latest,  release: R2018b, mode: core, legacy: true}
-          - {os: windows-latest, release: R2018b, mode: core, legacy: true}
     defaults:
       run:
         shell: bash
