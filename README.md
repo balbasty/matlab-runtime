@@ -33,8 +33,7 @@ pip install matlab-runtime
 
 ```text
 usage: install_matlab_runtime [-h] [-v VERSION ...] [-p PREFIX] [-u] [-y] [-x]
-                              [--products PRODUCT ...] [--ctf FILE ...]
-                              [--tmpdir TMPDIR]
+                              [-f PRODUCT ...] [-c FILE ...] [-t TMPDIR]
 
 Install any matlab runtime in any location.
 
@@ -63,14 +62,14 @@ options:
 
   -x, --patch       Patch the runtime if needed.
 
-  --products        Only install these products, by installer name
+  -f, --products    Only install these products, by installer name
                     (e.g. 'MATLAB_Runtime_Core') or ID (e.g. '35010').
                     Default: all products.
 
-  --ctf             Only install the products required by these compiled
+  -c, --ctf         Only install the products required by these compiled
                     CTF archives. Can be combined with '--products'.
 
-  --tmpdir          Folder for temporary files (download, unpacked
+  -t, --tmpdir      Folder for temporary files (download, unpacked
                     installer, installer temporary files).
                     Default: system temporary folder.
 ```

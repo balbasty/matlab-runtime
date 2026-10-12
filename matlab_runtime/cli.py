@@ -45,17 +45,17 @@ def _make_parser():
         "'MATLAB_Runtime_Core') or ID (e.g. '35010'). "
         "Default: all products."
     )
-    p.add_argument("--products", nargs="+", metavar="PRODUCT", help=_)
+    p.add_argument("-f", "--products", nargs="+", metavar="PRODUCT", help=_)
     _ = (
         "Only install the products required by these compiled CTF "
         "archives. Can be combined with '--products'."
     )
-    p.add_argument("--ctf", nargs="+", metavar="FILE", help=_)
+    p.add_argument("-c", "--ctf", nargs="+", metavar="FILE", help=_)
     _ = (
         "Folder for temporary files (download, unpacked installer, "
         "installer temporary files). Default: system temporary folder."
     )
-    p.add_argument("--tmpdir", help=_)
+    p.add_argument("-t", "--tmpdir", help=_)
     return p
 
 
