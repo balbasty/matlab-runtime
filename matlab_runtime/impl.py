@@ -305,6 +305,11 @@ def init(
 
     # --- prepare  -----------------------------------------------------
     arch = guess_arch()
+    launcher = _native_launcher_state()
+    if (version in (None, "latest_installed")) and launcher.get("release"):
+        # Running under the experimental `mpython-native` launcher:
+        # default to the runtime it selected.
+        version = launcher["release"]
     version = version or "latest_installed"
     if prefix is None:
         prefix = guess_prefix()
@@ -353,6 +358,14 @@ def init(
     sys.path.insert(0, sdk)
     sys.path.insert(0, ext)
 
+    # --- optional mwpython-guard diagnostic / bypass (experimental) ---
+    if _env_flag("MATLAB_RUNTIME_DIAGNOSE_GUARD"):
+        from . import macos
+        macos.diagnose_guard(path)
+    if _env_flag("MATLAB_RUNTIME_BYPASS_GUARD"):
+        from . import macos
+        macos.install_guard_bypass()
+
     # --- imports  -----------------------------------------------------
     importlib.import_module(_CPP)
     importlib.import_module(_SDK)
@@ -377,6 +390,23 @@ def init(
         )
 
     _INITIALIZED["SDK"] = version
+
+
+def _env_flag(name):
+    value = os.environ.get(name, "").strip().lower()
+    return value not in ("", "0", "false", "no")
+
+
+def _native_launcher_state():
+    # State of the experimental macOS launcher (matlab_runtime.macos),
+    # only if it has been imported (never import it here).
+    macos = sys.modules.get(__name__.rpartition(".")[0] + ".macos")
+    return getattr(macos, "STATE", None) or {}
+
+
+def _env_startup_options():
+    value = os.environ.get("MATLAB_RUNTIME_STARTUP_OPTIONS", "")
+    return [x.strip() for x in value.split(",") if x.strip()]
 
 
 class _PathInitializer:
@@ -441,8 +471,15 @@ def init_runtime(option_list=tuple(), error_if_already_init=False):
 
     cppext = importlib.import_module(_CPP)
 
+    # Options set through $MATLAB_RUNTIME_STARTUP_OPTIONS (e.g. by the
+    # experimental `mpython-native` launcher's -mlstartup/-nojvm).
+    option_list = tuple(option_list)
+    for option in _env_startup_options():
+        if option not in option_list:
+            option_list = (*option_list, option)
+
     arch = guess_arch()
-    if arch[:3] == "mac":
+    if arch[:3] == "mac" and not _native_launcher_state().get("in_runloop"):
         ignored_option_found = False
         for option in option_list:
             if option in ('-nodisplay', '-nojvm'):
@@ -473,9 +510,15 @@ def terminate_runtime():
         _INITIALIZED["RUNTIME"] = False
 
 
-@atexit.register
-def __atexit():
-    for package in _DEPLOYED_MODULES.values():
+def _cleanup():
+    # Idempotent: may be called by the macOS launcher from the worker
+    # thread before the interpreter exits, then again by atexit.
+    packages = list(_DEPLOYED_MODULES.values())
+    _DEPLOYED_MODULES.clear()
+    for package in packages:
         if package() is not None:
             package().terminate()
     terminate_runtime()
+
+
+atexit.register(_cleanup)

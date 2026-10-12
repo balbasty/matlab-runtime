@@ -25,6 +25,7 @@ Issues = "https://github.com/balbasty/matlab-runtime/issues"
 [project.scripts]
 install_matlab_runtime = "matlab_runtime.cli:main"
 mpython = "matlab_runtime.cli:mpython"
+mpython-native = "matlab_runtime.macos:main"  # experimental (macOS)
 mwpython2 = "matlab_runtime.cli:mwpython2"  # backward compatibility
 
 [build-system]
