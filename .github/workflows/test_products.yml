@@ -83,7 +83,15 @@ jobs:
           ${{ steps.select.outputs.args }}
 
       - name: Show installed size
+        if: ${{ always() }}
         run: du -sh "${{ steps.prefix.outputs.prefix }}"/* || true
+
+      - name: Inspect install prefix on failure
+        if: ${{ failure() }}
+        run: |
+          P="${{ steps.prefix.outputs.prefix }}"
+          find "$P" -maxdepth 2 | head -50
+          find "$P" -maxdepth 3 -name VersionInfo.xml -exec sh -c 'echo "== $1"; cat "$1"' _ {} \;
 
       - name: Run deployed CTF
         if: ${{ matrix.run-ctf }}
