@@ -99,3 +99,58 @@ jobs:
           ${{ runner.os == 'macOS' && 'mwpython2' || 'python' }}
           -m pytest tests/test_import.py
 
+
+  # Temporary: find which installer invocation works for R2019b on Linux
+  probe-r2019b:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: False
+      matrix:
+        variant: [full-cli, input-notmp, input-tmp, input-cli]
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/checkout@v4
+      - run: python -m pip install .
+      - name: Probe
+        shell: python
+        run: |
+          import os, subprocess, urllib.request, tempfile
+          from matlab_runtime.utils import guess_installer, ZipFileWithExecPerm
+          v = "${{ matrix.variant }}"
+          url = guess_installer("R2019b", "glnxa64")
+          d = tempfile.mkdtemp()
+          urllib.request.urlretrieve(url, os.path.join(d, "rt.zip"))
+          with ZipFileWithExecPerm(os.path.join(d, "rt.zip")) as z:
+              z.extractall(d)
+          prefix = "/tmp/MR"
+          log = os.path.join(d, "log.txt")
+          inp = os.path.join(d, "input.txt")
+          with open(inp, "w") as f:
+              f.write("product.MATLAB_Runtime___Numerics\n"
+                      f"outputFile={log}\n")
+              if v != "input-cli":
+                  f.write(f"mode=silent\ndestinationFolder={prefix}\n"
+                          "agreeToLicense=yes\n")
+          inst = os.path.join(d, "install")
+          if v == "full-cli":
+              call = [inst, "-agreeToLicense", "yes", "-mode", "silent",
+                      "-destinationFolder", prefix, "-tmpdir", d,
+                      "-outputFile", log]
+          elif v == "input-notmp":
+              call = [inst, "-inputFile", inp]
+          elif v == "input-tmp":
+              call = [inst, "-inputFile", inp, "-tmpdir", d]
+          else:
+              call = [inst, "-inputFile", inp, "-agreeToLicense", "yes",
+                      "-mode", "silent", "-destinationFolder", prefix]
+          print(call)
+          p = subprocess.run(call, capture_output=True)
+          print("ret", p.returncode)
+          print(p.stdout.decode(errors="replace")[-4000:])
+          print(p.stderr.decode(errors="replace")[-2000:])
+          if os.path.exists(log):
+              print(open(log, errors="replace").read()[-4000:])
+          subprocess.run(["du", "-sh", prefix])
+          subprocess.run(["sh", "-c", f"ls {prefix}/*"])
