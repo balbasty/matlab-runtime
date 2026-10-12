@@ -98,7 +98,7 @@ def test_jupyter_with_matplotlib(kernel):
         plt.plot([1, 2, 3])
         plt.savefig(io.BytesIO(), format="png")
 
-        remote.init()
+        remote.init(use_mpython=False)
         pkg = remote.import_deployed("fake_package")
         x = pkg.ident(np.eye(3))
         print("RESULT", pkg.test_runtime(), pkg.add(1, 2), x.sum())

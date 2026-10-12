@@ -37,7 +37,7 @@ def fake_env(monkeypatch):
 
 @pytest.fixture
 def pkg(fake_env):
-    remote.init()
+    remote.init(use_mpython=False)
     return remote.import_deployed("fake_package")
 
 
@@ -129,7 +129,7 @@ def test_shared_memory_no_leak_warnings(tmp_path):
     script.write_text(textwrap.dedent("""
         import numpy as np
         from matlab_runtime import remote
-        remote.init()
+        remote.init(use_mpython=False)
         pkg = remote.import_deployed("fake_package")
         x = np.random.rand(1000)
         assert (pkg.ident(x) == x).all()
@@ -152,7 +152,7 @@ def test_shared_memory_no_leak_warnings(tmp_path):
 
 def test_shared_memory_disabled(fake_env, monkeypatch):
     monkeypatch.setenv(protocol.ENV_SHM_THRESHOLD, "0")
-    remote.init()
+    remote.init(use_mpython=False)
     pkg = remote.import_deployed("fake_package")
     x = np.random.rand(10000)
     assert (pkg.ident(x) == x).all()
@@ -275,7 +275,7 @@ def test_crash_and_restart(pkg):
     with pytest.raises(remote.WorkerDiedError):
         remote.import_deployed("fake_package")
     remote.shutdown()
-    remote.init()
+    remote.init(use_mpython=False)
     pkg = remote.import_deployed("fake_package")
     assert pkg.test_runtime() == "success"
 
@@ -304,7 +304,7 @@ def test_kill(pkg):
 
 def test_init_twice(pkg):
     with pytest.raises(ValueError, match="already initialized"):
-        remote.init()
+        remote.init(use_mpython=False)
 
 
 def test_import_without_init(fake_env):
