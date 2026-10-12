@@ -231,11 +231,10 @@ def install(
             logfile = op.join(tmpdir, "installer_log.txt")
             with open(inputfile, "w") as f:
                 f.write(make_installer_input(names, prefix, logfile))
-            call = [
-                installer,
-                "-inputFile", inputfile,
-                "-tmpdir", tmpdir,
-            ]
+            # NOTE: `-tmpdir` makes older installers (<= R2023b) fail to
+            # extract archives when combined with `-inputFile`; the temporary
+            # directory is set through the environment instead (see below).
+            call = [installer, "-inputFile", inputfile]
         else:
             call = [
                 installer,
@@ -246,8 +245,7 @@ def install(
             ]
         print("Installing", call, "...")
         # NOTE: capture_output=True is **required** on windows
-        # Older installers (<= R2023b) extract archives through java's
-        # temporary directory, so point it to `tmpdir` as well.
+        # Make the installer's own temporary files honour `tmpdir`.
         env = dict(os.environ, TMPDIR=tmpdir, TMP=tmpdir, TEMP=tmpdir)
         proc = subprocess.run(call, capture_output=True, env=env)
         ret = proc.returncode
