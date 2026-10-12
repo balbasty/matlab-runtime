@@ -231,12 +231,10 @@ def install(
             logfile = op.join(tmpdir, "installer_log.txt")
             with open(inputfile, "w") as f:
                 f.write(make_installer_input(names, prefix, logfile))
-            workdir = op.join(tmpdir, "installer_tmp")
-            os.makedirs(workdir, exist_ok=True)
             call = [
                 installer,
                 "-inputFile", inputfile,
-                "-tmpdir", workdir,
+                "-tmpdir", tmpdir,
             ]
         else:
             call = [
@@ -248,7 +246,10 @@ def install(
             ]
         print("Installing", call, "...")
         # NOTE: capture_output=True is **required** on windows
-        proc = subprocess.run(call, capture_output=True)
+        # Older installers (<= R2023b) extract archives through java's
+        # temporary directory, so point it to `tmpdir` as well.
+        env = dict(os.environ, TMPDIR=tmpdir, TMP=tmpdir, TEMP=tmpdir)
+        proc = subprocess.run(call, capture_output=True, env=env)
         ret = proc.returncode
         log = ""
         if names and op.exists(logfile):
