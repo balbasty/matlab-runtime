@@ -149,7 +149,7 @@ def test_make_input_file():
         "destinationFolder=/opt/mcr",
         "agreeToLicense=yes",
         "outputFile=/tmp/log.txt",
-        "product.MATLAB Runtime - Numerics",
+        "product.MATLAB_Runtime___Numerics",
     ]
 
 

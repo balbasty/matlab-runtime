@@ -498,7 +498,12 @@ def make_installer_input(products, prefix, logfile=None, agree="yes"):
     ]
     if logfile:
         lines += [f"outputFile={logfile}"]
-    lines += [f"product.{name}" for name in products]
+    # The installer identifies products by their name with every
+    # non-alphanumeric character replaced by "_" (e.g. "MATLAB Runtime -
+    # Numerics" -> "MATLAB_Runtime___Numerics"), as in the
+    # `archives/productdata_<key><ver>_<arch>.xml` files it ships.
+    # Older installers (<= R2023b) ignore any other spelling.
+    lines += ["product." + re.sub(r"\W", "_", name) for name in products]
     return "\n".join(lines) + "\n"
 
 
