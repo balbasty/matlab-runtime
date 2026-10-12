@@ -36,7 +36,7 @@ jobs:
           - {os: windows-latest, release: R2019b, mode: core}
           - {os: windows-latest, release: R2022a, mode: core}
           - {os: windows-latest, release: R2026a, mode: core}
-          - {os: macos-latest,   release: R2023b, mode: core}
+          - {os: macos-latest,   release: R2025a, mode: core}
           - {os: macos-latest,   release: R2026a, mode: core}
           # --- Legacy installers (no product selection expected) -------
           - {os: ubuntu-latest,  release: R2018b, mode: core, legacy: true}
