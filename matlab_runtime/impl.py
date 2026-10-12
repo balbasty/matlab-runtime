@@ -124,6 +124,7 @@ def install(
     version = guess_release(version or "latest", arch)
     url = guess_installer(version, arch)
     raise_if_no = True
+    proc, log = None, ""  # installer outputs, for diagnostics
 
     if prefix is None:
         prefix = guess_prefix()
@@ -247,9 +248,11 @@ def install(
             ]
         print("Installing", call, "...")
         # NOTE: capture_output=True is **required** on windows
-        ret = subprocess.run(call, capture_output=True).returncode
+        proc = subprocess.run(call, capture_output=True)
+        ret = proc.returncode
+        log = ""
         if names and op.exists(logfile):
-            with open(logfile) as f:
+            with open(logfile, errors="replace") as f:
                 log = f.read()
             if "End - Successful" not in log:
                 print(log[-3000:])
@@ -273,6 +276,14 @@ def install(
                 "Runtime not found where it is expected (p):",
                 os.listdir(prefix)
             )
+        if log and "End - Successful" in log:
+            print("Installer log (tail):\n", log[-3000:])
+        if proc is not None:
+            outputs = (("stdout", proc.stdout), ("stderr", proc.stderr))
+            for name, out in outputs:
+                out = (out or b"").decode(errors="replace").strip()
+                if out:
+                    print(f"Installer {name} (tail):\n", out[-3000:])
         raise FileNotFoundError("Runtime not found where it is expected.")
 
     # --- patch --------------------------------------------------------
