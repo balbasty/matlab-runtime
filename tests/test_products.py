@@ -162,14 +162,12 @@ def test_cli_products(monkeypatch):
         "-v", "R2024b", "-p", "/opt/mcr", "-y",
         "--products", "Numerics", "MATLAB Runtime - Python", "35055",
         "--ctf", "a.ctf", "b.ctf",
-        "--tmpdir", "/scratch",
     ])
     (args, kwargs), = calls
     assert args == (["R2024b"], "/opt/mcr", True, False)
     assert kwargs == dict(
         products=["Numerics", "MATLAB Runtime - Python", "35055"],
         ctf=["a.ctf", "b.ctf"],
-        tmpdir="/scratch",
     )
 
 
@@ -180,7 +178,7 @@ def test_cli_defaults(monkeypatch):
     )
     cli.main([])
     (args, kwargs), = calls
-    assert kwargs == dict(products=None, ctf=None, tmpdir=None)
+    assert kwargs == dict(products=None, ctf=None)
 
 
 def test_cli_rejects_products_on_removal():

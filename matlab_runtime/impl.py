@@ -48,7 +48,6 @@ def install(
     patch=None,
     products=None,
     ctf=None,
-    tmpdir=None,
 ):
     """
     Install the matlab runtime.
@@ -82,10 +81,6 @@ def install(
     ctf : [list of] str, optional
         Only install the products required by these compiled CTF
         archives. Combined (union) with `products`.
-    tmpdir : str, optional
-        Folder in which temporary files (download, unpacked installer,
-        installer temporary files) are written.
-        Default: system default (see `tempfile.gettempdir()`).
 
     Raises
     ------
@@ -105,7 +100,7 @@ def install(
         for a_version in version:
             install(
                 a_version, prefix, auto_answer, patch,
-                products=products, ctf=ctf, tmpdir=tmpdir,
+                products=products, ctf=ctf,
             )
         return
 
@@ -154,12 +149,7 @@ def install(
 
     askuser(f"Download installer from {url}?", "yes", auto_answer, raise_if_no)
 
-    if tmpdir is not None:
-        tmpdir = op.realpath(op.abspath(tmpdir))
-        os.makedirs(tmpdir, exist_ok=True)
-    base_tmpdir = tmpdir
-
-    with tempfile.TemporaryDirectory(dir=tmpdir) as tmpdir:
+    with tempfile.TemporaryDirectory() as tmpdir:
         tmpdir = op.realpath(op.abspath(tmpdir))
 
         # --- download -------------------------------------------------
@@ -291,7 +281,7 @@ def install(
             print(f"Patch runtime {path}")
             yesno = True
         if yesno:
-            patch_runtime(path, base_tmpdir)
+            patch_runtime(path)
 
     # --- goodbye ------------------------------------------------------
     license = op.join(path, license)

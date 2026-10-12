@@ -52,11 +52,6 @@ def _make_parser():
         "archives. Can be combined with '--products'."
     )
     p.add_argument("-c", "--ctf", nargs="+", metavar="FILE", help=_)
-    _ = (
-        "Folder for temporary files (download, unpacked installer, "
-        "installer temporary files). Default: system temporary folder."
-    )
-    p.add_argument("-t", "--tmpdir", help=_)
     return p
 
 
@@ -73,7 +68,7 @@ def main(args=None):
     else:
         install(
             p.version, p.prefix, p.yes, p.patch,
-            products=p.products, ctf=p.ctf, tmpdir=p.tmpdir,
+            products=p.products, ctf=p.ctf,
         )
 
 

@@ -33,7 +33,7 @@ pip install matlab-runtime
 
 ```text
 usage: install_matlab_runtime [-h] [-v VERSION ...] [-p PREFIX] [-u] [-y] [-x]
-                              [-f PRODUCT ...] [-c FILE ...] [-t TMPDIR]
+                              [-f PRODUCT ...] [-c FILE ...]
 
 Install any matlab runtime in any location.
 
@@ -69,18 +69,17 @@ options:
 
   -c, --ctf         Only install the products required by these compiled
                     CTF archives. Can be combined with '--products'.
-
-  -t, --tmpdir      Folder for temporary files (download, unpacked
-                    installer, installer temporary files).
-                    Default: system temporary folder.
 ```
 
-Install only the products required by a compiled package, using a
-custom temporary folder:
+Install only the products required by a compiled package:
 
 ```shell
-install_matlab_runtime -v R2024b --ctf my_matlab_project.ctf --tmpdir /scratch/tmp
+install_matlab_runtime -v R2024b --ctf my_matlab_project.ctf
 ```
+
+Temporary files (download, unpacked installer) are written to the system
+temporary folder, which can be changed with the `TMPDIR`/`TMP`/`TEMP`
+environment variables.
 
 Product IDs listed in a CTF are mapped to installer product names using
 the `productdata/` folder shipped with the installer. If an installer does
@@ -116,7 +115,6 @@ Install only a subset of products (by name, or required by CTF files):
 ```python
 install("R2024b", products=["Numerics", "MATLAB Runtime - Python"], auto_answer=True)
 install("R2024b", ctf=["path/to/my_matlab_project.ctf"], auto_answer=True)
-install("R2024b", ctf="my.ctf", tmpdir="/scratch/tmp", auto_answer=True)
 ```
 
 Import a compiled MATLAB package:
@@ -169,7 +167,6 @@ def install(
     patch=None,
     products=None,
     ctf=None,
-    tmpdir=None,
 ):
     """
     Install the matlab runtime.
@@ -204,10 +201,6 @@ def install(
     ctf : [list of] str, optional
         Only install the products required by these compiled CTF
         archives. Combined (union) with `products`.
-    tmpdir : str, optional
-        Folder in which temporary files (download, unpacked installer,
-        installer temporary files) are written.
-        Default: system default (see `tempfile.gettempdir()`).
 
     Raises
     ------

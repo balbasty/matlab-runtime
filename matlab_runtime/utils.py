@@ -254,7 +254,7 @@ def download_bottle(package, version=None, digest=None, variant=None, out="."):
         request.install_opener(None)
 
 
-def patch_libcrypto(matlab_path, tmpdir=None):
+def patch_libcrypto(matlab_path):
     # Required on MacOS
     arch = guess_arch()
     libcrypto_path = op.join(matlab_path, "bin", arch, "libcrypto.3.dylib")
@@ -263,7 +263,7 @@ def patch_libcrypto(matlab_path, tmpdir=None):
 
     shutil.move(libcrypto_path, libcrypto_path + ".tmp", )
     try:
-        with tempfile.TemporaryDirectory(dir=tmpdir) as tmpdir:
+        with tempfile.TemporaryDirectory() as tmpdir:
             gzipfile = download_bottle("openssl", variant="3", out=tmpdir)
             with tarfile.open(gzipfile, "r:gz") as f:
                 f.extractall(tmpdir)
@@ -277,10 +277,10 @@ def patch_libcrypto(matlab_path, tmpdir=None):
         raise e
 
 
-def patch_runtime(matlab_path, tmpdir=None):
+def patch_runtime(matlab_path):
     arch = guess_arch()
     if arch[:3] == "mac":
-        patch_libcrypto(matlab_path, tmpdir)
+        patch_libcrypto(matlab_path)
 
 
 # ----------------------------------------------------------------------

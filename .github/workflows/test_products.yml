@@ -79,7 +79,6 @@ jobs:
         run: >
           install_matlab_runtime -v ${{ matrix.release }} -y
           --prefix "${{ steps.prefix.outputs.prefix }}"
-          --tmpdir "${{ runner.temp }}/mr_tmp"
           ${{ steps.select.outputs.args }}
 
       - name: Show installed size
