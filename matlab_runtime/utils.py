@@ -638,6 +638,32 @@ def guess_prefix():
     assert False
 
 
+def find_runtime_in_prefix(version, prefix):
+    """
+    Find a runtime installed directly under `prefix`.
+
+    Recent releases install into `<prefix>/<release>` (e.g. `R2024b`),
+    older ones into `<prefix>/v<NN>` (e.g. `v97` for R2019b).
+    Returns the path, or None if not found.
+    """
+    version = matlab_release(version)
+    path = op.join(prefix, version)
+    if op.exists(op.join(path, "VersionInfo.xml")):
+        return path
+    if not op.isdir(prefix):
+        return None
+    for name in sorted(os.listdir(prefix)):
+        path = op.join(prefix, name)
+        if not op.exists(op.join(path, "VersionInfo.xml")):
+            continue
+        try:
+            if guess_matlab_release(path) == version:
+                return path
+        except Exception:
+            continue
+    return None
+
+
 def find_runtime(version, prefix=None):
     """
     Find an installed MATLAB runtime with a specific version.

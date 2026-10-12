@@ -26,6 +26,7 @@ from .utils import (
     guess_installer,
     guess_release,
     find_runtime,
+    find_runtime_in_prefix,
     patch_runtime,
     macos_version,
     matlab_release,
@@ -130,11 +131,12 @@ def install(
 
     # --- check already exists -----------------------------------------
 
-    if op.exists(op.join(prefix, version, "VersionInfo.xml")):
+    path = find_runtime_in_prefix(version, prefix)
+    if path:
         # Do not raise_if_no so that we can exit peacefully
         ok = askuser("Runtime already exists. Reinstall?", "no", auto_answer)
         if not ok:
-            print("Do not reinstall:", op.join(prefix, version))
+            print("Do not reinstall:", path)
             return
         print("Runtime already exists. Reinstalling...")
 
@@ -255,10 +257,11 @@ def install(
         if ret:
             print("Installation failed?")
         else:
-            print("done ->", op.join(prefix, version))
+            print("done ->", find_runtime_in_prefix(version, prefix)
+                  or op.join(prefix, version))
 
     # --- check --------------------------------------------------------
-    path = op.join(prefix, version)
+    path = find_runtime_in_prefix(version, prefix) or op.join(prefix, version)
     if not op.exists(op.join(path, "VersionInfo.xml")):
         if op.exists(path):
             print(
@@ -280,11 +283,11 @@ def install(
             print(f"Patch runtime {path}")
             yesno = True
         if yesno:
-            patch_runtime(op.join(prefix, version), base_tmpdir)
+            patch_runtime(path, base_tmpdir)
 
     # --- goodbye ------------------------------------------------------
-    license = op.join(prefix, version, license)
-    print("Runtime succesfully installed at:", op.join(prefix, version))
+    license = op.join(path, license)
+    print("Runtime succesfully installed at:", path)
     print("License agreement available at:", license)
 
     # --- all done! ----------------------------------------------------
