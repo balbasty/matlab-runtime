@@ -85,7 +85,7 @@ install_matlab_runtime -v R2024b --ctf my_matlab_project.ctf --tmpdir /scratch/t
 Product IDs listed in a CTF are mapped to installer product names using
 the `productdata/` folder shipped with the installer. If an installer does
 not support product selection (e.g., pre-R2019a Windows `.exe` installers),
-an error is raised rather than installing all products.
+a warning is raised and all products are installed.
 
 Partial installation is based on
 [`install_runtime_products.py`](https://github.com/pranaysy/spm-python-setup/blob/main/install_runtime_products.py)
@@ -210,9 +210,12 @@ def install(
         If the user answers no to a question.
     ValueError
         If a requested product is unknown.
-    RuntimeError
+
+    Warns
+    -----
+    UserWarning
         If products are requested but the installer does not
-        support product selection.
+        support product selection (all products are then installed).
     """
     ...
 

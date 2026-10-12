@@ -92,9 +92,12 @@ def install(
         If the user answers no to a question.
     ValueError
         If a requested product is unknown.
-    RuntimeError
+
+    Warns
+    -----
+    UserWarning
         If products are requested but the installer does not
-        support product selection.
+        support product selection (all products are then installed).
     """
     # --- iterate if multiple versions  --------------------------------
     if isinstance(version, (list, tuple, set)):
@@ -182,12 +185,12 @@ def install(
 
         # --- products -------------------------------------------------
         names = None
-        if requested:
-            if not url.endswith(".zip"):
-                raise RuntimeError(
-                    f"Product selection is not supported by this "
-                    f"installer ({url}). Install all products instead."
-                )
+        if requested and not url.endswith(".zip"):
+            warnings.warn(
+                f"Product selection is not supported by this "
+                f"installer ({url}). Installing all products instead."
+            )
+        elif requested:
             available = installer_products(tmpdir)
             if available is None:
                 warnings.warn(
