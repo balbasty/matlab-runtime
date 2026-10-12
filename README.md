@@ -32,7 +32,9 @@ pip install matlab-runtime
 ## Command line tool
 
 ```text
-usage: install_matlab_runtime [-h] [-v VERSION ...] [-p PREFIX] [-u] [-y]
+usage: install_matlab_runtime [-h] [-v VERSION ...] [-p PREFIX] [-u] [-y] [-x]
+                              [--products PRODUCT ...] [--ctf FILE ...]
+                              [--tmpdir TMPDIR]
 
 Install any matlab runtime in any location.
 
@@ -60,7 +62,30 @@ options:
                     https://mathworks.com/help/compiler/install-the-matlab-runtime.html
 
   -x, --patch       Patch the runtime if needed.
+
+  --products        Only install these products, by installer name
+                    (e.g. 'MATLAB_Runtime_Core') or ID (e.g. '35010').
+                    Default: all products.
+
+  --ctf             Only install the products required by these compiled
+                    CTF archives. Can be combined with '--products'.
+
+  --tmpdir          Folder for temporary files (download, unpacked
+                    installer, installer temporary files).
+                    Default: system temporary folder.
 ```
+
+Install only the products required by a compiled package, using a
+custom temporary folder:
+
+```shell
+install_matlab_runtime -v R2024b --ctf my_matlab_project.ctf --tmpdir /scratch/tmp
+```
+
+Product IDs listed in a CTF are mapped to installer product names using
+the `productdata/` folder shipped with the installer. If an installer does
+not support product selection (e.g., pre-R2019a Windows `.exe` installers),
+an error is raised rather than installing all products.
 
 ## Python API
 
@@ -75,6 +100,14 @@ version = "R2024b"
 install(version, auto_answer=True)
 
 print(guess_prefix())
+```
+
+Install only a subset of products (by name, or required by CTF files):
+
+```python
+install("R2024b", products=["MATLAB_Runtime_Core"], auto_answer=True)
+install("R2024b", ctf=["path/to/my_matlab_project.ctf"], auto_answer=True)
+install("R2024b", ctf="my.ctf", tmpdir="/scratch/tmp", auto_answer=True)
 ```
 
 Import a compiled MATLAB package:
@@ -120,7 +153,15 @@ def guess_prefix():
     """
     ...
 
-def install(version=None, prefix=None, auto_answer=False):
+def install(
+    version=None,
+    prefix=None,
+    auto_answer=False,
+    patch=None,
+    products=None,
+    ctf=None,
+    tmpdir=None,
+):
     """
     Install the matlab runtime.
 
@@ -144,11 +185,30 @@ def install(version=None, prefix=None, auto_answer=False):
     default_answer : bool
         Default answer to all questions.
         **This entails accepting the MATLAB Runtime license agreement.**
+    patch : bool
+        Patch the runtime if needed (MacOS only).
+    products : [list of] str, optional
+        Only install these products. Products can be specified by
+        installer name (e.g., 'MATLAB_Runtime_Core' or
+        'MATLAB Runtime Core') or by ID (e.g., '35010').
+        Default: install all products.
+    ctf : [list of] str, optional
+        Only install the products required by these compiled CTF
+        archives. Combined (union) with `products`.
+    tmpdir : str, optional
+        Folder in which temporary files (download, unpacked installer,
+        installer temporary files) are written.
+        Default: system default (see `tempfile.gettempdir()`).
 
     Raises
     ------
     UserInterruptionError
         If the user answers no to a question.
+    ValueError
+        If a requested product is unknown.
+    RuntimeError
+        If products are requested but the installer does not
+        support product selection.
     """
     ...
 

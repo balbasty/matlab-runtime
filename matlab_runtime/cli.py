@@ -40,17 +40,40 @@ def _make_parser():
     p.add_argument("-y", "--yes", action="store_true", help=_)
     _ = "Patch the runtime if needed."
     p.add_argument("-x", "--patch", action="store_true", help=_)
+    _ = (
+        "Only install these products, by installer name (e.g. "
+        "'MATLAB_Runtime_Core') or ID (e.g. '35010'). "
+        "Default: all products."
+    )
+    p.add_argument("--products", nargs="+", metavar="PRODUCT", help=_)
+    _ = (
+        "Only install the products required by these compiled CTF "
+        "archives. Can be combined with '--products'."
+    )
+    p.add_argument("--ctf", nargs="+", metavar="FILE", help=_)
+    _ = (
+        "Folder for temporary files (download, unpacked installer, "
+        "installer temporary files). Default: system temporary folder."
+    )
+    p.add_argument("--tmpdir", help=_)
     return p
 
 
 def main(args=None):
     if args is None:
         args = sys.argv[1:]
-    p = _make_parser().parse_args(args)
+    parser = _make_parser()
+    p = parser.parse_args(args)
     if p.uninstall:
+        if p.products or p.ctf:
+            parser.error("'--products' and '--ctf' cannot be used with "
+                         "'--uninstall'")
         uninstall(p.version, p.prefix, p.yes)
     else:
-        install(p.version, p.prefix, p.yes, p.patch)
+        install(
+            p.version, p.prefix, p.yes, p.patch,
+            products=p.products, ctf=p.ctf, tmpdir=p.tmpdir,
+        )
 
 
 # --- mwpython2 --------------------------------------------------------

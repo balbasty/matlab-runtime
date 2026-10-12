@@ -32,11 +32,23 @@ from .utils import (
     matlab_version,
     guess_pymatlab_version,
     url_download,
+    ctf_required_products,
+    installer_products,
+    make_installer_input,
+    resolve_products,
     ZipFileWithExecPerm,
 )
 
 
-def install(version=None, prefix=None, auto_answer=False, patch=None):
+def install(
+    version=None,
+    prefix=None,
+    auto_answer=False,
+    patch=None,
+    products=None,
+    ctf=None,
+    tmpdir=None,
+):
     """
     Install the matlab runtime.
 
@@ -61,16 +73,46 @@ def install(version=None, prefix=None, auto_answer=False, patch=None):
         Default answer to all questions.
     patch : bool
         Patch the runtime if needed (MacOS only).
+    products : [list of] str, optional
+        Only install these products. Products can be specified by
+        installer name (e.g., 'MATLAB_Runtime_Core' or
+        'MATLAB Runtime Core') or by ID (e.g., '35010').
+        Default: install all products.
+    ctf : [list of] str, optional
+        Only install the products required by these compiled CTF
+        archives. Combined (union) with `products`.
+    tmpdir : str, optional
+        Folder in which temporary files (download, unpacked installer,
+        installer temporary files) are written.
+        Default: system default (see `tempfile.gettempdir()`).
 
     Raises
     ------
     UserInterruptionError
         If the user answers no to a question.
+    ValueError
+        If a requested product is unknown.
+    RuntimeError
+        If products are requested but the installer does not
+        support product selection.
     """
     # --- iterate if multiple versions  --------------------------------
     if isinstance(version, (list, tuple, set)):
-        list(map(lambda x: install(x, prefix, auto_answer, patch), version))
+        for a_version in version:
+            install(
+                a_version, prefix, auto_answer, patch,
+                products=products, ctf=ctf, tmpdir=tmpdir,
+            )
         return
+
+    # --- requested products  ------------------------------------------
+    if isinstance(products, str):
+        products = [products]
+    if isinstance(ctf, str):
+        ctf = [ctf]
+    requested = list(products or [])
+    for ctf_file in (ctf or []):
+        requested += ctf_required_products(ctf_file)
 
     # --- prepare  -----------------------------------------------------
     license = "matlabruntime_license_agreement.pdf"
@@ -106,7 +148,12 @@ def install(version=None, prefix=None, auto_answer=False, patch=None):
 
     askuser(f"Download installer from {url}?", "yes", auto_answer, raise_if_no)
 
-    with tempfile.TemporaryDirectory() as tmpdir:
+    if tmpdir is not None:
+        tmpdir = op.realpath(op.abspath(tmpdir))
+        os.makedirs(tmpdir, exist_ok=True)
+    base_tmpdir = tmpdir
+
+    with tempfile.TemporaryDirectory(dir=tmpdir) as tmpdir:
         tmpdir = op.realpath(op.abspath(tmpdir))
 
         # --- download -------------------------------------------------
@@ -133,6 +180,23 @@ def install(version=None, prefix=None, auto_answer=False, patch=None):
             print("No installer found in archive:", os.listdir(tmpdir))
             raise FileNotFoundError("No installer found in archive")
 
+        # --- products -------------------------------------------------
+        names = None
+        if requested:
+            if not url.endswith(".zip"):
+                raise RuntimeError(
+                    f"Product selection is not supported by this "
+                    f"installer ({url}). Install all products instead."
+                )
+            available = installer_products(tmpdir)
+            if available is None:
+                warnings.warn(
+                    "The installer does not provide product metadata: "
+                    "product names cannot be validated."
+                )
+            names = resolve_products(requested, available)
+            print("Products to install:", ", ".join(names))
+
         # --- install --------------------------------------------------
 
         question = (
@@ -155,16 +219,36 @@ def install(version=None, prefix=None, auto_answer=False, patch=None):
                 "sudo", "xattr", "-r", "-d", "com.apple.quarantine", tmpdir
             ])
 
-        call = [
-            installer,
-            "-agreeToLicense", "yes",
-            "-mode", "silent",
-            "-destinationFolder", prefix,
-            "-tmpdir", tmpdir,
-        ]
+        if names:
+            # Product selection is only possible through an input file
+            inputfile = op.join(tmpdir, "installer_input.txt")
+            logfile = op.join(tmpdir, "installer_log.txt")
+            with open(inputfile, "w") as f:
+                f.write(make_installer_input(names, prefix, logfile))
+            workdir = op.join(tmpdir, "installer_tmp")
+            os.makedirs(workdir, exist_ok=True)
+            call = [
+                installer,
+                "-inputFile", inputfile,
+                "-tmpdir", workdir,
+            ]
+        else:
+            call = [
+                installer,
+                "-agreeToLicense", "yes",
+                "-mode", "silent",
+                "-destinationFolder", prefix,
+                "-tmpdir", tmpdir,
+            ]
         print("Installing", call, "...")
         # NOTE: capture_output=True is **required** on windows
         ret = subprocess.run(call, capture_output=True).returncode
+        if names and op.exists(logfile):
+            with open(logfile) as f:
+                log = f.read()
+            if "End - Successful" not in log:
+                print(log[-3000:])
+                ret = ret or 1
         if ret:
             print("Installation failed?")
         else:
@@ -193,7 +277,7 @@ def install(version=None, prefix=None, auto_answer=False, patch=None):
             print(f"Patch runtime {path}")
             yesno = True
         if yesno:
-            patch_runtime(op.join(prefix, version))
+            patch_runtime(op.join(prefix, version), base_tmpdir)
 
     # --- goodbye ------------------------------------------------------
     license = op.join(prefix, version, license)

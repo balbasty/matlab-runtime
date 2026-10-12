@@ -253,7 +253,7 @@ def download_bottle(package, version=None, digest=None, variant=None, out="."):
         request.install_opener(None)
 
 
-def patch_libcrypto(matlab_path):
+def patch_libcrypto(matlab_path, tmpdir=None):
     # Required on MacOS
     arch = guess_arch()
     libcrypto_path = op.join(matlab_path, "bin", arch, "libcrypto.3.dylib")
@@ -262,7 +262,7 @@ def patch_libcrypto(matlab_path):
 
     shutil.move(libcrypto_path, libcrypto_path + ".tmp", )
     try:
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory(dir=tmpdir) as tmpdir:
             gzipfile = download_bottle("openssl", variant="3", out=tmpdir)
             with tarfile.open(gzipfile, "r:gz") as f:
                 f.extractall(tmpdir)
@@ -276,10 +276,180 @@ def patch_libcrypto(matlab_path):
         raise e
 
 
-def patch_runtime(matlab_path):
+def patch_runtime(matlab_path, tmpdir=None):
     arch = guess_arch()
     if arch[:3] == "mac":
-        patch_libcrypto(matlab_path)
+        patch_libcrypto(matlab_path, tmpdir)
+
+
+# ----------------------------------------------------------------------
+#   PRODUCTS
+# ----------------------------------------------------------------------
+
+
+def ctf_required_products(ctf):
+    """
+    List the MATLAB Runtime products required by a compiled CTF archive.
+
+    Parameters
+    ----------
+    ctf : str
+        Path to a CTF file (a zip archive produced by the MATLAB Compiler).
+
+    Returns
+    -------
+    ids : list[str]
+        Product IDs (e.g., '35010'), in the order they are listed.
+        Optional dependencies are not included.
+    """
+    with zipfile.ZipFile(ctf) as f:
+        names = f.namelist()
+
+        # Recent releases: JSON build summary with (optional) dependencies
+        for name in names:
+            if name.endswith(".META/buildresult.json"):
+                meta = json.loads(f.read(name).decode("utf-8"))
+                deps = meta.get("RuntimeDependencies", [])
+                return [
+                    str(dep["ID"]) for dep in deps
+                    if str(dep.get("Optional", "no")).lower() == "no"
+                ]
+
+        # All releases: whitespace-separated list of product IDs
+        for name in names:
+            if name.endswith(".META/requiredMCRProducts.txt"):
+                return f.read(name).decode("utf-8").split()
+
+    raise ValueError(f"No list of required products found in {ctf}")
+
+
+def installer_products(installer_dir):
+    """
+    List the products available in an (unpacked) MATLAB Runtime installer.
+
+    Parameters
+    ----------
+    installer_dir : str
+        Folder that contains the unpacked installer.
+
+    Returns
+    -------
+    products : dict[str, str] | None
+        Mapping from product ID to installer product name
+        (e.g., `{'35010': 'MATLAB_Runtime_Core'}`).
+        None if the installer does not ship product metadata.
+    """
+    productdata = op.join(installer_dir, "productdata")
+    if not op.isdir(productdata):
+        return None
+    products = {}
+    for fname in sorted(os.listdir(productdata)):
+        if not fname.endswith(".txt"):
+            continue
+        with open(op.join(productdata, fname), encoding="utf-8") as f:
+            for line in f:
+                key, _, value = line.partition("=")
+                if key.strip() == "name" and value.strip():
+                    products[fname[:-4]] = value.strip()
+                    break
+    return products
+
+
+def normalize_product_name(name):
+    """Convert a product name to its installer form (spaces -> "_")."""
+    name = str(name).strip()
+    if name.lower().startswith("product."):
+        name = name[8:]
+    return "_".join(name.split())
+
+
+def resolve_products(products, available=None):
+    """
+    Convert product names or IDs to installer product names.
+
+    Parameters
+    ----------
+    products : list[str]
+        Product names (e.g., 'MATLAB Runtime Core' or 'MATLAB_Runtime_Core')
+        or product IDs (e.g., '35010').
+    available : dict[str, str], optional
+        Mapping from product ID to installer product name, as returned
+        by `installer_products`. If None, names are passed through and
+        IDs cannot be resolved.
+
+    Returns
+    -------
+    names : list[str]
+        Unique installer product names, in input order.
+
+    Raises
+    ------
+    ValueError
+        If a product is unknown, or an ID cannot be resolved.
+    """
+    if available is not None:
+        by_lower = {v.lower(): v for v in available.values()}
+    names, unknown = [], []
+    for product in products:
+        product = normalize_product_name(product)
+        if not product:
+            continue
+        if product.isdigit():
+            if available is None or product not in available:
+                unknown.append(product)
+                continue
+            name = available[product]
+        elif available is None:
+            name = product
+        elif product.lower() in by_lower:
+            name = by_lower[product.lower()]
+        else:
+            unknown.append(product)
+            continue
+        if name not in names:
+            names.append(name)
+    if unknown:
+        if available is None:
+            raise ValueError(
+                f"Cannot resolve product IDs {unknown}: the installer "
+                f"does not provide product metadata. Use product names."
+            )
+        raise ValueError(
+            f"Unknown products: {unknown}. Available products: "
+            f"{sorted(available.values())}"
+        )
+    return names
+
+
+def make_installer_input(products, prefix, logfile=None, agree="yes"):
+    """
+    Build the content of an installer input file (`-inputFile`) that
+    installs a subset of products in silent mode.
+
+    Parameters
+    ----------
+    products : list[str]
+        Installer product names (e.g., 'MATLAB_Runtime_Core').
+    prefix : str
+        Destination folder.
+    logfile : str, optional
+        Installer log file.
+    agree : {"yes", "no"}
+        Agree to the license.
+
+    Returns
+    -------
+    content : str
+    """
+    lines = [
+        "mode=silent",
+        f"destinationFolder={prefix}",
+        f"agreeToLicense={agree}",
+    ]
+    if logfile:
+        lines += [f"outputFile={logfile}"]
+    lines += [f"product.{name}" for name in products]
+    return "\n".join(lines) + "\n"
 
 
 # ----------------------------------------------------------------------
