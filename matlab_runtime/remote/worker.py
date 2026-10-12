@@ -221,10 +221,13 @@ class Worker:
                 self.objects.pop(oid, None)
             if msg["op"] == "ack":
                 continue
-            if msg["op"] == "shutdown":
-                protocol.send(self.conn, {"id": msg["id"], "ok": True})
-                break
-            self.handle(msg)
+            try:
+                if msg["op"] == "shutdown":
+                    protocol.send(self.conn, {"id": msg["id"], "ok": True})
+                    break
+                self.handle(msg)
+            except (EOFError, OSError):
+                break   # the client is gone
         self.pending.release()
         self.conn.close()
 

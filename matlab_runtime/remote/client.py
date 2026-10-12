@@ -284,21 +284,25 @@ class Session:
     def _recv(self, rid, timeout):
         deadline = None if timeout is None else time.monotonic() + timeout
         while True:
-            if not self.conn.poll(0.2):
+            ready = False
+            try:
+                ready = self.conn.poll(0.2)
+                data = self.conn.recv_bytes() if ready else None
+            except (OSError, EOFError):
+                self._cleanup()
+                raise self._died()
+            except BaseException:
+                if ready:
+                    # Interrupted in the middle of a message
+                    self.kill()
+                raise
+            if not ready:
                 if self.proc.poll() is not None:
                     self._cleanup()
                     raise self._died()
                 if deadline is not None and time.monotonic() > deadline:
                     raise TimeoutError(f"No reply after {timeout} s.")
                 continue
-            try:
-                data = self.conn.recv_bytes()
-            except (OSError, EOFError):
-                self._cleanup()
-                raise self._died()
-            except BaseException:
-                self.kill()
-                raise
             try:
                 reply = protocol.loads(data)
             except ModuleNotFoundError as e:
