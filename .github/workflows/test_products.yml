@@ -29,18 +29,18 @@ jobs:
           - {os: macos-latest,   release: R2024b, mode: ctf,      run-ctf: true}
           - {os: macos-latest,   release: R2024b, mode: products, run-ctf: true}
           # --- Other releases: product selection only -----------------
-          - {os: ubuntu-latest,  release: R2019b, mode: numerics}
-          - {os: ubuntu-latest,  release: R2021b, mode: numerics}
-          - {os: ubuntu-latest,  release: R2023b, mode: numerics}
-          - {os: ubuntu-latest,  release: R2026a, mode: numerics}
-          - {os: windows-latest, release: R2019b, mode: numerics}
-          - {os: windows-latest, release: R2022a, mode: numerics}
-          - {os: windows-latest, release: R2026a, mode: numerics}
-          - {os: macos-latest,   release: R2023b, mode: numerics}
-          - {os: macos-latest,   release: R2026a, mode: numerics}
+          - {os: ubuntu-latest,  release: R2019b, mode: core}
+          - {os: ubuntu-latest,  release: R2021b, mode: core}
+          - {os: ubuntu-latest,  release: R2023b, mode: core}
+          - {os: ubuntu-latest,  release: R2026a, mode: core}
+          - {os: windows-latest, release: R2019b, mode: core}
+          - {os: windows-latest, release: R2022a, mode: core}
+          - {os: windows-latest, release: R2026a, mode: core}
+          - {os: macos-latest,   release: R2023b, mode: core}
+          - {os: macos-latest,   release: R2026a, mode: core}
           # --- Legacy installers (no product selection expected) -------
-          - {os: ubuntu-latest,  release: R2018b, mode: numerics, legacy: true}
-          - {os: windows-latest, release: R2018b, mode: numerics, legacy: true}
+          - {os: ubuntu-latest,  release: R2018b, mode: core, legacy: true}
+          - {os: windows-latest, release: R2018b, mode: core, legacy: true}
     defaults:
       run:
         shell: bash
@@ -72,7 +72,7 @@ jobs:
           case "${{ matrix.mode }}" in
             ctf)      echo 'args=--ctf tests/_test_runtime/_test_runtime.ctf' >> "$GITHUB_OUTPUT" ;;
             products) echo 'args=--products Numerics "MATLAB Runtime - Python"' >> "$GITHUB_OUTPUT" ;;
-            numerics) echo 'args=--products Numerics' >> "$GITHUB_OUTPUT" ;;
+            core)     echo 'args=--products 35010' >> "$GITHUB_OUTPUT" ;;
           esac
 
       - name: Install runtime subset

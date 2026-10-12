@@ -87,6 +87,11 @@ the `productdata/` folder shipped with the installer. If an installer does
 not support product selection (e.g., pre-R2019a Windows `.exe` installers),
 a warning is raised and all products are installed.
 
+Product names differ between releases (e.g., product `35010` is called
+"MATLAB Runtime - Numerics" in R2024b but "MATLAB Base Runtime" in R2026a),
+whereas product IDs are stable. Prefer IDs or CTF archives in scripts that
+target several releases.
+
 Partial installation is based on
 [`install_runtime_products.py`](https://github.com/pranaysy/spm-python-setup/blob/main/install_runtime_products.py)
 by [@pranaysy](https://github.com/pranaysy).
