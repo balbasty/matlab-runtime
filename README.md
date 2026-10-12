@@ -86,6 +86,10 @@ the `productdata/` folder shipped with the installer. If an installer does
 not support product selection (e.g., pre-R2019a Windows `.exe` installers),
 an error is raised rather than installing all products.
 
+Partial installation is based on
+[`install_runtime_products.py`](https://github.com/pranaysy/spm-python-setup/blob/main/install_runtime_products.py)
+by [@pranaysy](https://github.com/pranaysy).
+
 ## Python API
 
 ### Examples
