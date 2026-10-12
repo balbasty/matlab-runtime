@@ -19,6 +19,7 @@ This is a small package that simply allows to
 * [Python API](#python-api)
   * [Examples](#examples)
   * [API](#api)
+* [Out-of-process runtime (`matlab_runtime.remote`)](#out-of-process-runtime-matlab_runtimeremote)
 * [Troubleshooting](#troubleshooting)
   * [MacOS](#macos)
   * [Windows](#windows)
@@ -217,6 +218,83 @@ def import_deployed(*packages):
     ...
 ```
 
+## Out-of-process runtime (`matlab_runtime.remote`)
+
+> **Experimental.**
+
+`matlab_runtime.remote` runs the MATLAB SDK in a separate worker process
+and talks to it from the current interpreter. On macOS, the worker is
+started through `mwpython` (with the same environment fixes as
+`mpython`), so compiled MATLAB packages can be used from the normal
+python interpreter, from a Jupyter kernel (no `kernel.json` edit
+needed), and alongside packages such as `matplotlib`.
+
+```python
+import numpy as np
+import my_matlab_project
+from matlab_runtime import remote
+
+remote.init("R2024b")  # Same version used when compiling the package
+
+my_matlab_project = remote.import_deployed(my_matlab_project)
+y = my_matlab_project.my_function(np.ones([3, 3]))
+a, b = my_matlab_project.my_other_function(y, nargout=2)
+
+remote.shutdown()  # Optional: also done at exit
+```
+
+`remote.init` takes the same arguments as `init`, plus:
+
+* `executable`: python interpreter used to run the worker
+  (default: the current one, through `mwpython` on macOS);
+* `use_mpython`: whether to go through `mwpython`
+  (default: on macOS, unless `executable` is given);
+* `start_timeout`: maximum time (in seconds) given to the worker to start;
+* `shm_threshold`: arrays of at least that many bytes are exchanged through
+  shared memory (default: `MATLAB_RUNTIME_SHM_THRESHOLD` or 1 MiB;
+  0 disables it).
+
+`remote.import_deployed` starts the worker (with default options) if
+`remote.init` has not been called. `remote.kill()` stops the worker
+immediately, and `remote.is_alive()` tells whether it is running.
+
+What comes back:
+
+* MATLAB numeric and logical arrays are returned as numpy arrays
+  (with at least two dimensions); numpy arrays are passed as the
+  corresponding MATLAB arrays (`float64` -> `double`, `float32` ->
+  `single`, `bool` -> `logical`, integers -> integers, complex ->
+  complex). numpy is only needed in the client if arrays are exchanged.
+* Strings, numbers, lists (cells), dicts (structs) and tuples are copied.
+* Anything else (deployed packages, MATLAB objects, ...) stays in the
+  worker and is returned as a `remote.RemoteHandle`, whose attributes and
+  methods are accessed remotely. It can be passed back as an argument.
+* Errors raised in the worker are raised again in the client, with the
+  same type for builtin exceptions (`remote.RemoteError` otherwise) and
+  with the remote traceback attached as `__cause__`.
+* Text printed by the worker is forwarded to `sys.stdout`/`sys.stderr`.
+  `stdout=`/`stderr=` file-like arguments are filled when the call
+  returns. If the worker dies, `remote.WorkerDiedError` is raised (with
+  its last error messages); call `remote.shutdown()` and `remote.init()`
+  to start a new one.
+
+Limitations:
+
+* One call at a time (calls from several threads wait for each other);
+  `background=True` is not supported.
+* Interrupting (Ctrl-C, or interrupting a Jupyter kernel) stops waiting
+  for the result, but not the MATLAB computation: the next call waits for
+  it to finish.
+* Attributes of remote objects cannot be set, and names that start with
+  an underscore are not forwarded.
+* Arguments must be picklable; packages passed to `import_deployed` must
+  be importable by the worker (it uses the same `sys.path`).
+* On macOS, the runtime used by `mwpython` is found the same way as
+  `mpython` does (standard locations, or `MATLAB_RUNTIME_PATH`).
+* Still to be verified on macOS: array conversions with each MATLAB
+  release, shared memory under `mwpython`, forwarding of output printed
+  by MATLAB itself, and startup time.
+
 ## Troubleshooting
 
 ### MacOS
@@ -235,7 +313,8 @@ Instead, we provide our own wrapper, `mpython`, which is automatically
 installed with this package. It does solve the conda environement issue.
 
 That said, the `matplotlib` package still cannot be used with this wrapper
-(nor can it be used with MATLAB's `mwpython`).
+(nor can it be used with MATLAB's `mwpython`). To use both, see
+[`matlab_runtime.remote`](#out-of-process-runtime-matlab_runtimeremote).
 
 #### Jupyter + libcrypto
 
@@ -246,6 +325,10 @@ modifies files whithin the MATLAB runtime installation folder, which
 may have unexpected effects. This is not a robust/thoroughly tested fix.
 
 #### Jupyter + `mpython`
+
+The simplest option is to use
+[`matlab_runtime.remote`](#out-of-process-runtime-matlab_runtimeremote),
+which does not require any change to the kernel. Otherwise:
 
 By default, jupyter runs its kernel through the "normal" python interpreter.
 In order to use the MATLAB packages in the kernel, it is necessary to
