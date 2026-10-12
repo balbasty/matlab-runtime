@@ -3,6 +3,7 @@ import math
 import os
 import os.path as op
 import platform
+import re
 import shutil
 import stat
 import sys
@@ -327,6 +328,10 @@ def installer_products(installer_dir):
     """
     List the products available in an (unpacked) MATLAB Runtime installer.
 
+    Each `productdata/<ID>.txt` file starts with a header line such as
+    `#product_name = MATLAB Runtime - Numerics`, followed by the list of
+    files that the product installs.
+
     Parameters
     ----------
     installer_dir : str
@@ -336,7 +341,7 @@ def installer_products(installer_dir):
     -------
     products : dict[str, str] | None
         Mapping from product ID to installer product name
-        (e.g., `{'35010': 'MATLAB_Runtime_Core'}`).
+        (e.g., `{'35010': 'MATLAB Runtime - Numerics'}`).
         None if the installer does not ship product metadata.
     """
     productdata = op.join(installer_dir, "productdata")
@@ -352,36 +357,54 @@ def installer_products(installer_dir):
             text = raw.decode("utf-16", errors="replace")
         else:
             text = raw.decode("utf-8-sig", errors="replace")
-        entries = [
-            [part.strip() for part in line.partition("=")[::2]]
-            for line in text.splitlines() if "=" in line
-        ]
-        # The first line is usually "name=<name>"
-        names = [v for k, v in entries if k.lower() == "name" and v]
-        if not names:
-            names = [v for _, v in entries[:1] if v]
-        if names:
-            products[fname[:-4]] = names[0]
+        for line in text.splitlines():
+            if "=" not in line:
+                # file list entries -- never product names
+                continue
+            key, _, value = line.partition("=")
+            key = key.strip().lstrip("#").strip().lower()
+            value = value.strip()
+            if key in ("name", "product_name") and value:
+                products[fname[:-4]] = value
+                break
     return products
 
 
+_PRODUCT_PREFIX_KEY = "matlab_runtime_"
+
+
 def normalize_product_name(name):
-    """Convert a product name to its installer form (spaces -> "_")."""
+    """
+    Clean up a user-provided product name: strip whitespace and any
+    leading `product.`, and collapse runs of whitespace.
+    """
     name = str(name).strip()
     if name.lower().startswith("product."):
         name = name[8:]
-    return "_".join(name.split())
+    return " ".join(name.split())
+
+
+def _product_key(name):
+    """Canonical matching key: lowercase, spaces/_/- equivalent."""
+    name = normalize_product_name(name).lower()
+    return "_".join(part for part in re.split(r"[\s_-]+", name) if part)
 
 
 def resolve_products(products, available=None):
     """
     Convert product names or IDs to installer product names.
 
+    Matching is lenient: case, a leading `product.`, and the difference
+    between spaces, underscores and hyphens are ignored. The short name
+    that follows "MATLAB Runtime - " (e.g., 'Numerics') is also accepted
+    when unambiguous.
+
     Parameters
     ----------
     products : list[str]
-        Product names (e.g., 'MATLAB Runtime Core' or 'MATLAB_Runtime_Core')
-        or product IDs (e.g., '35010').
+        Product names (e.g., 'MATLAB Runtime - Numerics',
+        'MATLAB_Runtime_Numerics' or 'Numerics') or product IDs
+        (e.g., '35010').
     available : dict[str, str], optional
         Mapping from product ID to installer product name, as returned
         by `installer_products`. If None, names are passed through and
@@ -390,20 +413,27 @@ def resolve_products(products, available=None):
     Returns
     -------
     names : list[str]
-        Unique installer product names, in input order.
+        Unique installer product names (exactly as listed by the
+        installer), in input order.
 
     Raises
     ------
     ValueError
-        If a product is unknown, or an ID cannot be resolved.
+        If a product is unknown or ambiguous, or an ID cannot be resolved.
     """
-    if available is not None:
-        by_lower = {v.lower(): v for v in available.values()}
-    names, unknown = [], []
+    by_key, by_short = {}, {}
+    for name in (available or {}).values():
+        key = _product_key(name)
+        by_key[key] = name
+        if key.startswith(_PRODUCT_PREFIX_KEY):
+            short = key[len(_PRODUCT_PREFIX_KEY):]
+            by_short.setdefault(short, set()).add(name)
+    names, unknown, ambiguous = [], [], []
     for product in products:
         product = normalize_product_name(product)
         if not product:
             continue
+        key = _product_key(product)
         if product.isdigit():
             if available is None or product not in available:
                 unknown.append(product)
@@ -411,23 +441,33 @@ def resolve_products(products, available=None):
             name = available[product]
         elif available is None:
             name = product
-        elif product.lower() in by_lower:
-            name = by_lower[product.lower()]
+        elif key in by_key:
+            name = by_key[key]
+        elif len(by_short.get(key, ())) == 1:
+            name, = by_short[key]
+        elif key in by_short:
+            ambiguous.append(product)
+            continue
         else:
             unknown.append(product)
             continue
         if name not in names:
             names.append(name)
-    if unknown:
+    if unknown or ambiguous:
         if available is None:
             raise ValueError(
                 f"Cannot resolve product IDs {unknown}: the installer "
                 f"does not provide product metadata. Use product names."
             )
-        raise ValueError(
-            f"Unknown products: {unknown}. Available products: "
-            f"{sorted(available.values())}"
+        listing = ", ".join(
+            f"{pid}: {name!r}" for pid, name in sorted(available.items())
         )
+        msg = []
+        if unknown:
+            msg.append(f"Unknown products: {unknown}.")
+        if ambiguous:
+            msg.append(f"Ambiguous products: {ambiguous}.")
+        raise ValueError(" ".join(msg) + f" Available products: {listing}")
     return names
 
 
@@ -439,7 +479,7 @@ def make_installer_input(products, prefix, logfile=None, agree="yes"):
     Parameters
     ----------
     products : list[str]
-        Installer product names (e.g., 'MATLAB_Runtime_Core').
+        Installer product names (e.g., 'MATLAB Runtime - Numerics').
     prefix : str
         Destination folder.
     logfile : str, optional

@@ -63,7 +63,8 @@ options:
   -x, --patch       Patch the runtime if needed.
 
   -f, --products    Only install these products, by installer name
-                    (e.g. 'MATLAB_Runtime_Core') or ID (e.g. '35010').
+                    (e.g. 'MATLAB Runtime - Numerics'), short name
+                    (e.g. 'Numerics') or ID (e.g. '35010').
                     Default: all products.
 
   -c, --ctf         Only install the products required by these compiled
@@ -108,7 +109,7 @@ print(guess_prefix())
 Install only a subset of products (by name, or required by CTF files):
 
 ```python
-install("R2024b", products=["MATLAB_Runtime_Core"], auto_answer=True)
+install("R2024b", products=["Numerics", "MATLAB Runtime - Python"], auto_answer=True)
 install("R2024b", ctf=["path/to/my_matlab_project.ctf"], auto_answer=True)
 install("R2024b", ctf="my.ctf", tmpdir="/scratch/tmp", auto_answer=True)
 ```
@@ -192,8 +193,8 @@ def install(
         Patch the runtime if needed (MacOS only).
     products : [list of] str, optional
         Only install these products. Products can be specified by
-        installer name (e.g., 'MATLAB_Runtime_Core' or
-        'MATLAB Runtime Core') or by ID (e.g., '35010').
+        installer name (e.g., 'MATLAB Runtime - Numerics'),
+        short name (e.g., 'Numerics') or ID (e.g., '35010').
         Default: install all products.
     ctf : [list of] str, optional
         Only install the products required by these compiled CTF

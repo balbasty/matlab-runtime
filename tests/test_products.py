@@ -15,9 +15,13 @@ from matlab_runtime.utils import (
 
 TEST_CTF = op.join(op.dirname(__file__), "_test_runtime", "_test_runtime.ctf")
 AVAILABLE = {
-    "35010": "MATLAB_Runtime_Core",
-    "35055": "MATLAB_Runtime_Numerics",
+    "35010": "MATLAB Runtime - Numerics",
+    "35055": "MATLAB Runtime - Python",
 }
+
+
+def _productdata(name, files=("ddux_mapi_win64_1786212496.enc",)):
+    return "\n".join([f"#product_name = {name}", *files]) + "\n"
 
 
 def test_ctf_products_from_test_runtime():
@@ -27,7 +31,7 @@ def test_ctf_products_from_test_runtime():
 def test_ctf_products_from_buildresult(tmp_path):
     ctf = tmp_path / "pkg.ctf"
     meta = {"RuntimeDependencies": [
-        {"ID": 35000, "Name": "Core"},
+        {"ID": 35000},
         {"ID": "35010", "Optional": "no"},
         {"ID": "35099", "Optional": "yes"},
     ]}
@@ -49,51 +53,103 @@ def test_productdata(tmp_path):
     assert installer_products(str(tmp_path)) is None
     (tmp_path / "productdata").mkdir()
     (tmp_path / "productdata" / "35010.txt").write_text(
-        "name=MATLAB_Runtime_Core\nversion=24.2\n"
+        _productdata("MATLAB Runtime - Numerics", [
+            "ddux_mapi_win64_1786212496.enc",
+            "bin/win64/libmwfoo.dll",
+        ])
+    )
+    # a product file without any header is skipped
+    (tmp_path / "productdata" / "35099.txt").write_text(
+        "ddux_mapi_win64_1.enc\nbin/win64/a.dll\n"
     )
     (tmp_path / "productdata" / "readme.md").write_text("ignored")
     assert installer_products(str(tmp_path)) == {
-        "35010": "MATLAB_Runtime_Core"
+        "35010": "MATLAB Runtime - Numerics"
     }
 
 
+def test_productdata_plain_name_key(tmp_path):
+    (tmp_path / "productdata").mkdir()
+    (tmp_path / "productdata" / "35010.txt").write_text(
+        "Name = MATLAB Runtime - Numerics\nfoo.enc\n"
+    )
+    assert installer_products(str(tmp_path)) == {
+        "35010": "MATLAB Runtime - Numerics"
+    }
+
+
+def test_installer_products_encodings(tmp_path):
+    (tmp_path / "productdata").mkdir()
+    (tmp_path / "productdata" / "35010.txt").write_bytes(
+        ("\ufeff" + _productdata("MATLAB Runtime - Numerics"))
+        .replace("\n", "\r\n").encode("utf-8")
+    )
+    (tmp_path / "productdata" / "35055.txt").write_bytes(
+        _productdata("MATLAB Runtime - Python").encode("utf-16")
+    )
+    assert installer_products(str(tmp_path)) == AVAILABLE
+
+
 def test_normalize_product_name():
-    assert normalize_product_name(" MATLAB  Runtime Core ") \
-        == "MATLAB_Runtime_Core"
-    assert normalize_product_name("product.MATLAB_Runtime_Core") \
-        == "MATLAB_Runtime_Core"
+    assert normalize_product_name(" MATLAB  Runtime - Numerics ") \
+        == "MATLAB Runtime - Numerics"
+    assert normalize_product_name("product.MATLAB Runtime - Numerics") \
+        == "MATLAB Runtime - Numerics"
+
+
+@pytest.mark.parametrize("query", [
+    "MATLAB Runtime - Numerics",
+    "matlab runtime - numerics",
+    "MATLAB_Runtime_Numerics",
+    "MATLAB_Runtime_-_Numerics",
+    "product.MATLAB Runtime - Numerics",
+    "Numerics",
+    "numerics",
+    "35010",
+])
+def test_resolve_products_lenient(query):
+    assert resolve_products([query], AVAILABLE) \
+        == ["MATLAB Runtime - Numerics"]
 
 
 def test_resolve_products_known():
     names = resolve_products(
-        ["matlab runtime core", "35055", "35010"], AVAILABLE
+        ["python", "35055", "MATLAB_Runtime_Numerics", "35010"], AVAILABLE
     )
-    assert names == ["MATLAB_Runtime_Core", "MATLAB_Runtime_Numerics"]
+    assert names == ["MATLAB Runtime - Python", "MATLAB Runtime - Numerics"]
 
 
 def test_resolve_products_unknown():
-    with pytest.raises(ValueError, match="Unknown products"):
+    with pytest.raises(ValueError, match="Unknown products") as e:
         resolve_products(["Not_A_Product"], AVAILABLE)
+    assert "35010: 'MATLAB Runtime - Numerics'" in str(e.value)
     with pytest.raises(ValueError, match="Unknown products"):
         resolve_products(["99999"], AVAILABLE)
 
 
+def test_resolve_products_ambiguous():
+    available = dict(AVAILABLE, **{"35999": "MATLAB_Runtime_Numerics"})
+    with pytest.raises(ValueError, match="Ambiguous products"):
+        resolve_products(["Numerics"], available)
+
+
 def test_resolve_products_passthrough():
-    assert resolve_products(["Foo Bar"]) == ["Foo_Bar"]
+    assert resolve_products(["product.MATLAB Runtime - Numerics"]) \
+        == ["MATLAB Runtime - Numerics"]
     with pytest.raises(ValueError, match="product IDs"):
         resolve_products(["35010"])
 
 
 def test_make_input_file():
     content = make_installer_input(
-        ["MATLAB_Runtime_Core"], "/opt/mcr", "/tmp/log.txt"
+        ["MATLAB Runtime - Numerics"], "/opt/mcr", "/tmp/log.txt"
     )
     assert content.splitlines() == [
         "mode=silent",
         "destinationFolder=/opt/mcr",
         "agreeToLicense=yes",
         "outputFile=/tmp/log.txt",
-        "product.MATLAB_Runtime_Core",
+        "product.MATLAB Runtime - Numerics",
     ]
 
 
@@ -104,14 +160,14 @@ def test_cli_products(monkeypatch):
     )
     cli.main([
         "-v", "R2024b", "-p", "/opt/mcr", "-y",
-        "--products", "MATLAB_Runtime_Core", "35055",
+        "--products", "Numerics", "MATLAB Runtime - Python", "35055",
         "--ctf", "a.ctf", "b.ctf",
         "--tmpdir", "/scratch",
     ])
     (args, kwargs), = calls
     assert args == (["R2024b"], "/opt/mcr", True, False)
     assert kwargs == dict(
-        products=["MATLAB_Runtime_Core", "35055"],
+        products=["Numerics", "MATLAB Runtime - Python", "35055"],
         ctf=["a.ctf", "b.ctf"],
         tmpdir="/scratch",
     )
@@ -129,15 +185,4 @@ def test_cli_defaults(monkeypatch):
 
 def test_cli_rejects_products_on_removal():
     with pytest.raises(SystemExit):
-        cli.main(["-u", "--products", "MATLAB_Runtime_Core"])
-
-
-def test_installer_products_encodings(tmp_path):
-    (tmp_path / "productdata").mkdir()
-    (tmp_path / "productdata" / "35010.txt").write_bytes(
-        "﻿name=MATLAB_Runtime_Core\r\nversion=24.2\r\n".encode("utf-8")
-    )
-    (tmp_path / "productdata" / "35055.txt").write_bytes(
-        "name=MATLAB_Runtime_Numerics\n".encode("utf-16")
-    )
-    assert installer_products(str(tmp_path)) == AVAILABLE
+        cli.main(["-u", "--products", "Numerics"])

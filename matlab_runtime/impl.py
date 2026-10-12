@@ -75,8 +75,8 @@ def install(
         Patch the runtime if needed (MacOS only).
     products : [list of] str, optional
         Only install these products. Products can be specified by
-        installer name (e.g., 'MATLAB_Runtime_Core' or
-        'MATLAB Runtime Core') or by ID (e.g., '35010').
+        installer name (e.g., 'MATLAB Runtime - Numerics'),
+        short name (e.g., 'Numerics') or ID (e.g., '35010').
         Default: install all products.
     ctf : [list of] str, optional
         Only install the products required by these compiled CTF

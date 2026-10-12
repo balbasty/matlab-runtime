@@ -29,7 +29,7 @@ jobs:
           - mode: ctf
             select: --ctf tests/_test_runtime/_test_runtime.ctf
           - mode: products
-            select: --products 35010 35055
+            select: --products Numerics "MATLAB Runtime - Python"
     defaults:
       run:
         shell: bash
@@ -67,23 +67,3 @@ jobs:
 
       - name: Run deployed CTF
         run: ${{ matrix.python-bin }} -m pytest tests/test_import.py
-
-  # Temporary: inspect the product metadata shipped with the Windows installer
-  inspect-windows-installer:
-    runs-on: windows-latest
-    steps:
-      - name: Dump productdata
-        shell: python
-        run: |
-          import urllib.request, zipfile
-          url = "https://ssd.mathworks.com/supportfiles/downloads/R2024b/Release/10/deployment_files/installer/complete/win64/MATLAB_Runtime_R2024b_Update_10_win64.zip"
-          urllib.request.urlretrieve(url, "rt.zip")
-          z = zipfile.ZipFile("rt.zip")
-          names = z.namelist()
-          print(len(names), "entries")
-          print("\n".join(n for n in names if n.count("/") <= 1)[:5000])
-          pd = [n for n in names if n.startswith("productdata/")]
-          print("productdata entries:", pd[:50])
-          for n in [n for n in pd if n.endswith(("/35010.txt", "/35055.txt"))]:
-              print("==", n)
-              print(repr(z.read(n)[:1500]))

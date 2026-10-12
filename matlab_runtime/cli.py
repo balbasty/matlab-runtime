@@ -42,7 +42,8 @@ def _make_parser():
     p.add_argument("-x", "--patch", action="store_true", help=_)
     _ = (
         "Only install these products, by installer name (e.g. "
-        "'MATLAB_Runtime_Core') or ID (e.g. '35010'). "
+        "'MATLAB Runtime - Numerics'), short name (e.g. 'Numerics') "
+        "or ID (e.g. '35010'). "
         "Default: all products."
     )
     p.add_argument("-f", "--products", nargs="+", metavar="PRODUCT", help=_)
