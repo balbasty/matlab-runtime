@@ -3,6 +3,7 @@ import math
 import os
 import os.path as op
 import platform
+import re
 import shutil
 import stat
 import sys
@@ -283,6 +284,230 @@ def patch_runtime(matlab_path):
 
 
 # ----------------------------------------------------------------------
+#   PRODUCTS
+# ----------------------------------------------------------------------
+
+
+def ctf_required_products(ctf):
+    """
+    List the MATLAB Runtime products required by a compiled CTF archive.
+
+    Parameters
+    ----------
+    ctf : str
+        Path to a CTF file (a zip archive produced by the MATLAB Compiler).
+
+    Returns
+    -------
+    ids : list[str]
+        Product IDs (e.g., '35010'), in the order they are listed.
+        Optional dependencies are not included.
+    """
+    with zipfile.ZipFile(ctf) as f:
+        names = f.namelist()
+
+        # Recent releases: JSON build summary with (optional) dependencies
+        for name in names:
+            if name.endswith(".META/buildresult.json"):
+                meta = json.loads(f.read(name).decode("utf-8"))
+                deps = meta.get("RuntimeDependencies", [])
+                return [
+                    str(dep["ID"]) for dep in deps
+                    if str(dep.get("Optional", "no")).lower() == "no"
+                ]
+
+        # All releases: whitespace-separated list of product IDs
+        for name in names:
+            if name.endswith(".META/requiredMCRProducts.txt"):
+                return f.read(name).decode("utf-8").split()
+
+    raise ValueError(f"No list of required products found in {ctf}")
+
+
+def installer_products(installer_dir):
+    """
+    List the products available in an (unpacked) MATLAB Runtime installer.
+
+    Each `productdata/<ID>.txt` file starts with a header line such as
+    `#product_name = MATLAB Runtime - Numerics`, followed by the list of
+    files that the product installs.
+
+    Parameters
+    ----------
+    installer_dir : str
+        Folder that contains the unpacked installer.
+
+    Returns
+    -------
+    products : dict[str, str] | None
+        Mapping from product ID to installer product name
+        (e.g., `{'35010': 'MATLAB Runtime - Numerics'}`).
+        None if the installer does not ship product metadata.
+    """
+    productdata = op.join(installer_dir, "productdata")
+    if not op.isdir(productdata):
+        return None
+    products = {}
+    for fname in sorted(os.listdir(productdata)):
+        if not fname.endswith(".txt"):
+            continue
+        with open(op.join(productdata, fname), "rb") as f:
+            raw = f.read()
+        if raw[:2] in (b"\xff\xfe", b"\xfe\xff"):
+            text = raw.decode("utf-16", errors="replace")
+        else:
+            text = raw.decode("utf-8-sig", errors="replace")
+        for line in text.splitlines():
+            if "=" not in line:
+                # file list entries -- never product names
+                continue
+            key, _, value = line.partition("=")
+            key = key.strip().lstrip("#").strip().lower()
+            value = value.strip()
+            if key in ("name", "product_name") and value:
+                products[fname[:-4]] = value
+                break
+    return products
+
+
+_PRODUCT_PREFIX_KEY = "matlab_runtime_"
+
+
+def normalize_product_name(name):
+    """
+    Clean up a user-provided product name: strip whitespace and any
+    leading `product.`, and collapse runs of whitespace.
+    """
+    name = str(name).strip()
+    if name.lower().startswith("product."):
+        name = name[8:]
+    return " ".join(name.split())
+
+
+def _product_key(name):
+    """Canonical matching key: lowercase, spaces/_/- equivalent."""
+    name = normalize_product_name(name).lower()
+    return "_".join(part for part in re.split(r"[\s_-]+", name) if part)
+
+
+def resolve_products(products, available=None):
+    """
+    Convert product names or IDs to installer product names.
+
+    Matching is lenient: case, a leading `product.`, and the difference
+    between spaces, underscores and hyphens are ignored. The short name
+    that follows "MATLAB Runtime - " (e.g., 'Numerics') is also accepted
+    when unambiguous.
+
+    Parameters
+    ----------
+    products : list[str]
+        Product names (e.g., 'MATLAB Runtime - Numerics',
+        'MATLAB_Runtime_Numerics' or 'Numerics') or product IDs
+        (e.g., '35010').
+    available : dict[str, str], optional
+        Mapping from product ID to installer product name, as returned
+        by `installer_products`. If None, names are passed through and
+        IDs cannot be resolved.
+
+    Returns
+    -------
+    names : list[str]
+        Unique installer product names (exactly as listed by the
+        installer), in input order.
+
+    Raises
+    ------
+    ValueError
+        If a product is unknown or ambiguous, or an ID cannot be resolved.
+    """
+    by_key, by_short = {}, {}
+    for name in (available or {}).values():
+        key = _product_key(name)
+        by_key[key] = name
+        if key.startswith(_PRODUCT_PREFIX_KEY):
+            short = key[len(_PRODUCT_PREFIX_KEY):]
+            by_short.setdefault(short, set()).add(name)
+    names, unknown, ambiguous = [], [], []
+    for product in products:
+        product = normalize_product_name(product)
+        if not product:
+            continue
+        key = _product_key(product)
+        if product.isdigit():
+            if available is None or product not in available:
+                unknown.append(product)
+                continue
+            name = available[product]
+        elif available is None:
+            name = product
+        elif key in by_key:
+            name = by_key[key]
+        elif len(by_short.get(key, ())) == 1:
+            name, = by_short[key]
+        elif key in by_short:
+            ambiguous.append(product)
+            continue
+        else:
+            unknown.append(product)
+            continue
+        if name not in names:
+            names.append(name)
+    if unknown or ambiguous:
+        if available is None:
+            raise ValueError(
+                f"Cannot resolve product IDs {unknown}: the installer "
+                f"does not provide product metadata. Use product names."
+            )
+        listing = ", ".join(
+            f"{pid}: {name!r}" for pid, name in sorted(available.items())
+        )
+        msg = []
+        if unknown:
+            msg.append(f"Unknown products: {unknown}.")
+        if ambiguous:
+            msg.append(f"Ambiguous products: {ambiguous}.")
+        raise ValueError(" ".join(msg) + f" Available products: {listing}")
+    return names
+
+
+def make_installer_input(products, prefix, logfile=None, agree="yes"):
+    """
+    Build the content of an installer input file (`-inputFile`) that
+    installs a subset of products in silent mode.
+
+    Parameters
+    ----------
+    products : list[str]
+        Installer product names (e.g., 'MATLAB Runtime - Numerics').
+    prefix : str
+        Destination folder.
+    logfile : str, optional
+        Installer log file.
+    agree : {"yes", "no"}
+        Agree to the license.
+
+    Returns
+    -------
+    content : str
+    """
+    lines = [
+        "mode=silent",
+        f"destinationFolder={prefix}",
+        f"agreeToLicense={agree}",
+    ]
+    if logfile:
+        lines += [f"outputFile={logfile}"]
+    # The installer identifies products by their name with every
+    # non-alphanumeric character replaced by "_" (e.g. "MATLAB Runtime -
+    # Numerics" -> "MATLAB_Runtime___Numerics"), as in the
+    # `archives/productdata_<key><ver>_<arch>.xml` files it ships.
+    # Older installers (<= R2023b) ignore any other spelling.
+    lines += ["product." + re.sub(r"\W", "_", name) for name in products]
+    return "\n".join(lines) + "\n"
+
+
+# ----------------------------------------------------------------------
 #   SYSTEM/ARCH
 # ----------------------------------------------------------------------
 
@@ -416,6 +641,32 @@ def guess_prefix():
     if arch[:3] == "mac":
         return "/Applications/MATLAB/MATLAB_Runtime"
     assert False
+
+
+def find_runtime_in_prefix(version, prefix):
+    """
+    Find a runtime installed directly under `prefix`.
+
+    Recent releases install into `<prefix>/<release>` (e.g. `R2024b`),
+    older ones into `<prefix>/v<NN>` (e.g. `v97` for R2019b).
+    Returns the path, or None if not found.
+    """
+    version = matlab_release(version)
+    path = op.join(prefix, version)
+    if op.exists(op.join(path, "VersionInfo.xml")):
+        return path
+    if not op.isdir(prefix):
+        return None
+    for name in sorted(os.listdir(prefix)):
+        path = op.join(prefix, name)
+        if not op.exists(op.join(path, "VersionInfo.xml")):
+            continue
+        try:
+            if guess_matlab_release(path) == version:
+                return path
+        except Exception:
+            continue
+    return None
 
 
 def find_runtime(version, prefix=None):

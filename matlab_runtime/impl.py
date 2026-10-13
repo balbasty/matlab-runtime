@@ -26,17 +26,29 @@ from .utils import (
     guess_installer,
     guess_release,
     find_runtime,
+    find_runtime_in_prefix,
     patch_runtime,
     macos_version,
     matlab_release,
     matlab_version,
     guess_pymatlab_version,
     url_download,
+    ctf_required_products,
+    installer_products,
+    make_installer_input,
+    resolve_products,
     ZipFileWithExecPerm,
 )
 
 
-def install(version=None, prefix=None, auto_answer=False, patch=None):
+def install(
+    version=None,
+    prefix=None,
+    auto_answer=False,
+    patch=None,
+    products=None,
+    ctf=None,
+):
     """
     Install the matlab runtime.
 
@@ -61,16 +73,45 @@ def install(version=None, prefix=None, auto_answer=False, patch=None):
         Default answer to all questions.
     patch : bool
         Patch the runtime if needed (MacOS only).
+    products : [list of] str, optional
+        Only install these products. Products can be specified by
+        installer name (e.g., 'MATLAB Runtime - Numerics'),
+        short name (e.g., 'Numerics') or ID (e.g., '35010').
+        Default: install all products.
+    ctf : [list of] str, optional
+        Only install the products required by these compiled CTF
+        archives. Combined (union) with `products`.
 
     Raises
     ------
     UserInterruptionError
         If the user answers no to a question.
+    ValueError
+        If a requested product is unknown.
+
+    Warns
+    -----
+    UserWarning
+        If products are requested but the installer does not
+        support product selection (all products are then installed).
     """
     # --- iterate if multiple versions  --------------------------------
     if isinstance(version, (list, tuple, set)):
-        list(map(lambda x: install(x, prefix, auto_answer, patch), version))
+        for a_version in version:
+            install(
+                a_version, prefix, auto_answer, patch,
+                products=products, ctf=ctf,
+            )
         return
+
+    # --- requested products  ------------------------------------------
+    if isinstance(products, str):
+        products = [products]
+    if isinstance(ctf, str):
+        ctf = [ctf]
+    requested = list(products or [])
+    for ctf_file in (ctf or []):
+        requested += ctf_required_products(ctf_file)
 
     # --- prepare  -----------------------------------------------------
     license = "matlabruntime_license_agreement.pdf"
@@ -78,6 +119,7 @@ def install(version=None, prefix=None, auto_answer=False, patch=None):
     version = guess_release(version or "latest", arch)
     url = guess_installer(version, arch)
     raise_if_no = True
+    proc, log = None, ""  # installer outputs, for diagnostics
 
     if prefix is None:
         prefix = guess_prefix()
@@ -85,11 +127,12 @@ def install(version=None, prefix=None, auto_answer=False, patch=None):
 
     # --- check already exists -----------------------------------------
 
-    if op.exists(op.join(prefix, version, "VersionInfo.xml")):
+    path = find_runtime_in_prefix(version, prefix)
+    if path:
         # Do not raise_if_no so that we can exit peacefully
         ok = askuser("Runtime already exists. Reinstall?", "no", auto_answer)
         if not ok:
-            print("Do not reinstall:", op.join(prefix, version))
+            print("Do not reinstall:", path)
             return
         print("Runtime already exists. Reinstalling...")
 
@@ -133,6 +176,23 @@ def install(version=None, prefix=None, auto_answer=False, patch=None):
             print("No installer found in archive:", os.listdir(tmpdir))
             raise FileNotFoundError("No installer found in archive")
 
+        # --- products -------------------------------------------------
+        names = None
+        if requested and not url.endswith(".zip"):
+            warnings.warn(
+                f"Product selection is not supported by this "
+                f"installer ({url}). Installing all products instead."
+            )
+        elif requested:
+            available = installer_products(tmpdir)
+            if available is None:
+                warnings.warn(
+                    "The installer does not provide product metadata: "
+                    "product names cannot be validated."
+                )
+            names = resolve_products(requested, available)
+            print("Products to install:", ", ".join(names))
+
         # --- install --------------------------------------------------
 
         question = (
@@ -155,23 +215,43 @@ def install(version=None, prefix=None, auto_answer=False, patch=None):
                 "sudo", "xattr", "-r", "-d", "com.apple.quarantine", tmpdir
             ])
 
-        call = [
-            installer,
-            "-agreeToLicense", "yes",
-            "-mode", "silent",
-            "-destinationFolder", prefix,
-            "-tmpdir", tmpdir,
-        ]
+        if names:
+            # Product selection is only possible through an input file
+            inputfile = op.join(tmpdir, "installer_input.txt")
+            logfile = op.join(tmpdir, "installer_log.txt")
+            with open(inputfile, "w") as f:
+                f.write(make_installer_input(names, prefix, logfile))
+            call = [installer, "-inputFile", inputfile]
+        else:
+            call = [
+                installer,
+                "-agreeToLicense", "yes",
+                "-mode", "silent",
+                "-destinationFolder", prefix,
+            ]
         print("Installing", call, "...")
         # NOTE: capture_output=True is **required** on windows
-        ret = subprocess.run(call, capture_output=True).returncode
+        # NOTE: `-tmpdir` makes older installers (e.g. R2019b) fail to
+        # extract archives ("No such file or directory"), so the installer's
+        # temporary directory is set through the environment instead.
+        env = dict(os.environ, TMPDIR=tmpdir, TMP=tmpdir, TEMP=tmpdir)
+        proc = subprocess.run(call, capture_output=True, env=env)
+        ret = proc.returncode
+        log = ""
+        if names and op.exists(logfile):
+            with open(logfile, errors="replace") as f:
+                log = f.read()
+            if "End - Successful" not in log:
+                print(log[-3000:])
+                ret = ret or 1
         if ret:
             print("Installation failed?")
         else:
-            print("done ->", op.join(prefix, version))
+            print("done ->", find_runtime_in_prefix(version, prefix)
+                  or op.join(prefix, version))
 
     # --- check --------------------------------------------------------
-    path = op.join(prefix, version)
+    path = find_runtime_in_prefix(version, prefix) or op.join(prefix, version)
     if not op.exists(op.join(path, "VersionInfo.xml")):
         if op.exists(path):
             print(
@@ -183,6 +263,14 @@ def install(version=None, prefix=None, auto_answer=False, patch=None):
                 "Runtime not found where it is expected (p):",
                 os.listdir(prefix)
             )
+        if log and "End - Successful" in log:
+            print("Installer log (tail):\n", log[-3000:])
+        if proc is not None:
+            outputs = (("stdout", proc.stdout), ("stderr", proc.stderr))
+            for name, out in outputs:
+                out = (out or b"").decode(errors="replace").strip()
+                if out:
+                    print(f"Installer {name} (tail):\n", out[-3000:])
         raise FileNotFoundError("Runtime not found where it is expected.")
 
     # --- patch --------------------------------------------------------
@@ -193,11 +281,11 @@ def install(version=None, prefix=None, auto_answer=False, patch=None):
             print(f"Patch runtime {path}")
             yesno = True
         if yesno:
-            patch_runtime(op.join(prefix, version))
+            patch_runtime(path)
 
     # --- goodbye ------------------------------------------------------
-    license = op.join(prefix, version, license)
-    print("Runtime succesfully installed at:", op.join(prefix, version))
+    license = op.join(path, license)
+    print("Runtime succesfully installed at:", path)
     print("License agreement available at:", license)
 
     # --- all done! ----------------------------------------------------

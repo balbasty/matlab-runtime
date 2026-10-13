@@ -32,7 +32,8 @@ pip install matlab-runtime
 ## Command line tool
 
 ```text
-usage: install_matlab_runtime [-h] [-v VERSION ...] [-p PREFIX] [-u] [-y]
+usage: install_matlab_runtime [-h] [-v VERSION ...] [-p PREFIX] [-u] [-y] [-x]
+                              [-f PRODUCT ...] [-c FILE ...]
 
 Install any matlab runtime in any location.
 
@@ -60,7 +61,39 @@ options:
                     https://mathworks.com/help/compiler/install-the-matlab-runtime.html
 
   -x, --patch       Patch the runtime if needed.
+
+  -f, --products    Only install these products, by installer name
+                    (e.g. 'MATLAB Runtime - Numerics'), short name
+                    (e.g. 'Numerics') or ID (e.g. '35010').
+                    Default: all products.
+
+  -c, --ctf         Only install the products required by these compiled
+                    CTF archives. Can be combined with '--products'.
 ```
+
+Install only the products required by a compiled package:
+
+```shell
+install_matlab_runtime -v R2024b --ctf my_matlab_project.ctf
+```
+
+Temporary files (download, unpacked installer) are written to the system
+temporary folder, which can be changed with the `TMPDIR`/`TMP`/`TEMP`
+environment variables.
+
+Product IDs listed in a CTF are mapped to installer product names using
+the `productdata/` folder shipped with the installer. If an installer does
+not support product selection (e.g., pre-R2019a Windows `.exe` installers),
+a warning is raised and all products are installed.
+
+Product names differ between releases (e.g., product `35010` is called
+"MATLAB Runtime - Numerics" in R2024b but "MATLAB Base Runtime" in R2026a),
+whereas product IDs are stable. Prefer IDs or CTF archives in scripts that
+target several releases.
+
+Partial installation is based on
+[`install_runtime_products.py`](https://github.com/pranaysy/spm-python-setup/blob/main/install_runtime_products.py)
+by [@pranaysy](https://github.com/pranaysy).
 
 ## Python API
 
@@ -75,6 +108,13 @@ version = "R2024b"
 install(version, auto_answer=True)
 
 print(guess_prefix())
+```
+
+Install only a subset of products (by name, or required by CTF files):
+
+```python
+install("R2024b", products=["Numerics", "MATLAB Runtime - Python"], auto_answer=True)
+install("R2024b", ctf=["path/to/my_matlab_project.ctf"], auto_answer=True)
 ```
 
 Import a compiled MATLAB package:
@@ -120,7 +160,14 @@ def guess_prefix():
     """
     ...
 
-def install(version=None, prefix=None, auto_answer=False):
+def install(
+    version=None,
+    prefix=None,
+    auto_answer=False,
+    patch=None,
+    products=None,
+    ctf=None,
+):
     """
     Install the matlab runtime.
 
@@ -144,11 +191,29 @@ def install(version=None, prefix=None, auto_answer=False):
     default_answer : bool
         Default answer to all questions.
         **This entails accepting the MATLAB Runtime license agreement.**
+    patch : bool
+        Patch the runtime if needed (MacOS only).
+    products : [list of] str, optional
+        Only install these products. Products can be specified by
+        installer name (e.g., 'MATLAB Runtime - Numerics'),
+        short name (e.g., 'Numerics') or ID (e.g., '35010').
+        Default: install all products.
+    ctf : [list of] str, optional
+        Only install the products required by these compiled CTF
+        archives. Combined (union) with `products`.
 
     Raises
     ------
     UserInterruptionError
         If the user answers no to a question.
+    ValueError
+        If a requested product is unknown.
+
+    Warns
+    -----
+    UserWarning
+        If products are requested but the installer does not
+        support product selection (all products are then installed).
     """
     ...
 
