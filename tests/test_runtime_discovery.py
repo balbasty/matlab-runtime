@@ -6,7 +6,7 @@ import zipfile
 
 import pytest
 
-from matlab_runtime import utils
+from matlab_runtime import cli, utils
 from matlab_runtime.utils import (
     RuntimeNotFoundError,
     UnsupportedPythonError,
@@ -317,3 +317,83 @@ def test_deployed_ctf(tmp_path, monkeypatch):
     monkeypatch.syspath_prepend(str(tmp_path))
     assert op.samefile(deployed_ctf("mypkg"), str(pkg / "compiled.ctf"))
     assert "mypkg" not in sys.modules
+
+
+# --- mpython ------------------------------------------------------------
+
+
+@pytest.fixture
+def mac(env, monkeypatch):
+    """Pretend to be on macOS; capture mwpython calls."""
+    monkeypatch.setattr(utils, "guess_arch", lambda: "maca64")
+    monkeypatch.setattr(cli, "guess_arch", lambda: "maca64")
+    monkeypatch.setattr(utils, "CANDIDATE_LOCATIONS_BY_OS", {"mac": []})
+    for name in ("PYTHONHOME", "PYTHONPATH", "DYLD_FALLBACK_LIBRARY_PATH"):
+        monkeypatch.delenv(name, raising=False)
+    calls = []
+
+    class Done:
+        returncode = 0
+
+    def run(call, **kwargs):
+        calls.append(call)
+        return Done()
+    monkeypatch.setattr(cli.subprocess, "run", run)
+    return dict(env, calls=calls)
+
+
+def fake_mwpython(path, release):
+    path = fake_runtime(path, release, mwpython=True)
+    app = op.join(path, "bin", "maca64", "mwpython.app", "Contents", "MacOS")
+    os.makedirs(app)
+    open(op.join(app, "mwpython"), "w").close()
+    return path
+
+
+def current_python():
+    return "{}.{}".format(*sys.version_info[:2])
+
+
+def test_find_mwpython_runtime_picks_newest_supported(mac, monkeypatch):
+    monkeypatch.setattr(utils, "SUPPORTED_PYTHON_VERSIONS", {
+        "R2026b": ["2.0"],
+        "R2024b": [current_python()],
+        "R2023b": [current_python()],
+    })
+    fake_mwpython(mac["prefix"] / "R2026b", "R2026b")
+    path = fake_mwpython(mac["prefix"] / "R2024b", "R2024b")
+    fake_mwpython(mac["prefix"] / "R2023b", "R2023b")
+    assert cli.find_mwpython_runtime() == ("R2024b", path)
+
+    assert cli.mpython(["-c", "print(1)"]) == 0
+    (call,), = [mac["calls"]]
+    assert call[0].startswith(path)
+    assert call[-2:] == ["-mwpythonver", current_python()]
+    assert os.environ["DYLD_FALLBACK_LIBRARY_PATH"].startswith(".")
+
+
+def test_mpython_runtime_path_release_folder(mac, monkeypatch):
+    # Used to raise KeyError: SUPPORTED_PYTHON_VERSIONS["latest_installed"]
+    monkeypatch.setattr(utils, "SUPPORTED_PYTHON_VERSIONS",
+                        {"R2024b": [current_python()]})
+    path = fake_mwpython(mac["tmp"] / "custom" / "R2024b", "R2024b")
+    monkeypatch.setenv("MATLAB_RUNTIME_PATH", path)
+    assert cli.mpython(["script.py"]) == 0
+    assert mac["calls"][0][0].startswith(path)
+
+
+def test_mpython_unsupported_python(mac, monkeypatch, capsys):
+    monkeypatch.setattr(utils, "SUPPORTED_PYTHON_VERSIONS",
+                        {"R2024b": ["2.0"]})
+    fake_mwpython(mac["prefix"] / "R2024b", "R2024b")
+    assert cli.mpython(["script.py"]) == 1
+    assert "R2024b" in capsys.readouterr().err
+    assert cli.mpython(["-variant", "R2024b", "script.py"]) == 1
+    assert not mac["calls"]
+
+
+def test_mpython_not_found(mac, capsys):
+    fake_runtime(mac["prefix"] / "R2024b", "R2024b")  # no bin/mwpython
+    assert cli.mpython(["script.py"]) == 1
+    assert "rejected" in capsys.readouterr().err
+    assert not mac["calls"]

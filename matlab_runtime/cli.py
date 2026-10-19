@@ -7,8 +7,8 @@ from .impl import install, uninstall
 from .utils import (
   guess_arch,
   guess_prefix,
-  iter_existing_installations,
-  SUPPORTED_PYTHON_VERSIONS,
+  resolve_runtime,
+  VersionNotFoundError,
 )
 
 
@@ -80,7 +80,8 @@ usage: mpython [-verbose] [-variant vrt] [py_args] [-mlstartup opt[,opt]] [-c cm
 
 Arguments:
     -verbose            : verbose mode
-    -variant            : MATLAB runtime version to use (latest installed)
+    -variant            : MATLAB runtime version to use (default: latest
+                          installed that supports this Python)
     py_args             : arguments and options passed to Python
     -mlstartup opt[,opt]: set of MATLAB runtime startup options
     -c cmd              : execute Python command cmd
@@ -97,6 +98,44 @@ Examples:
     Execute Python command 'x=3;print(x)'
         mpython -c "'x=3;print(x)'"
 """  # noqa: E501
+
+
+def _has_mwpython(path):
+    return op.exists(op.join(path, "bin", "mwpython"))
+
+
+def find_mwpython_runtime(variant="latest_installed", python_version=None):
+    """
+    Find the MATLAB Runtime whose `mwpython` should wrap python (macOS).
+
+    Parameters
+    ----------
+    variant : str, default="latest_installed"
+        MATLAB release (e.g. 'R2024b') or version (e.g. '24.2').
+        If 'latest_installed', the most recent installed release that
+        supports `python_version`.
+    python_version : str | tuple, optional
+        Python version to wrap. Default: the running Python.
+
+    Returns
+    -------
+    release : str
+        MATLAB release (e.g. 'R2024b').
+    mcrroot : str
+        Root of the installation (that contains `bin/mwpython`).
+
+    Raises
+    ------
+    RuntimeNotFoundError
+        If no matching installation ships `bin/mwpython`.
+    UnsupportedPythonError
+        If the (installed) release(s) do not support `python_version`.
+    """
+    if python_version is None:
+        python_version = sys.version_info
+    return resolve_runtime(
+        variant, python_version=python_version, accept=_has_mwpython
+    )
 
 
 def mpython(args=None):
@@ -154,35 +193,22 @@ def mpython(args=None):
     if verbose:
         print(f"arch: {arch}")
 
-    exe_dir = None
-    for path, ver in iter_existing_installations(variant):
-        if op.exists(op.join(path, "bin", 'mwpython')):
-            exe_dir = op.join(path, "bin")
-            variant = ver
-            if verbose:
-                print(f"Found mwpython for MATLAB {variant} at {exe_dir}")
-            break
-    if exe_dir is None:
-        raise RuntimeError(
-            "No MATLAB Runtime found. If you have installed Matlab Runtime "
-            "in an unusual location, please set the MATLAB_RUNTIME_PATH "
-            "environment variable to the path of the installation."
-        )
+    python_version = f"{sys.version_info.major}.{sys.version_info.minor}"
+
+    try:
+        variant, mcrroot = find_mwpython_runtime(variant, python_version)
+    except VersionNotFoundError as e:
+        print(e, file=sys.stderr)
+        return 1
+    exe_dir = op.join(mcrroot, "bin")
+    if verbose:
+        print(f"Found mwpython for MATLAB {variant} at {exe_dir}")
 
     # --- PYTHONHOME ---------------------------------------------------
 
     python_app = sys.executable
     python_home = sys.prefix
     python_libdir = op.join(python_home, "lib")
-    python_version = f"{sys.version_info.major}.{sys.version_info.minor}"
-
-    supported_python_versions = SUPPORTED_PYTHON_VERSIONS[variant]
-    if python_version not in supported_python_versions:
-        print(
-            f"Python {python_version} is unsupported with MATLAB {variant}. "
-            f"Supported versions are:", ", ".join(supported_python_versions)
-        )
-        return 1
 
     ENV["PYTHONHOME"] = python_home
 
