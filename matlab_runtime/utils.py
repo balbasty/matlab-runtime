@@ -10,6 +10,7 @@ import sys
 import tempfile
 import zipfile
 import tarfile
+import threading
 from datetime import datetime
 from urllib import error, parse, request
 from xml.etree import ElementTree
@@ -977,13 +978,32 @@ def guess_installer(release, arch=None, max_update=10):
     return INSTALLERS[A][R]
 
 
-def _get_matlab_info_from_web():
-    URL = (
-        "https://raw.githubusercontent.com/balbasty/matlab-runtime/"
-        "refs/heads/main/matlab_runtime/info.json"
-    )
-    content = None
-    with request.urlopen(URL) as response:
+def _env_flag(name):
+    """True if the environment variable `name` is set to a truthy value."""
+    value = os.environ.get(name, "").strip().lower()
+    return value not in ("", "0", "false", "no", "off")
+
+
+INFO_URL = (
+    "https://raw.githubusercontent.com/balbasty/matlab-runtime/"
+    "refs/heads/main/matlab_runtime/info.json"
+)
+DEFAULT_INFO_TIMEOUT = 3.0
+
+
+def _info_timeout():
+    # Timeout (in seconds) of the remote registry fetch
+    value = os.environ.get("MATLAB_RUNTIME_INFO_TIMEOUT", "").strip()
+    try:
+        return float(value) if value else DEFAULT_INFO_TIMEOUT
+    except ValueError:
+        return DEFAULT_INFO_TIMEOUT
+
+
+def _get_matlab_info_from_web(timeout=None):
+    if timeout is None:
+        timeout = _info_timeout()
+    with request.urlopen(INFO_URL, timeout=timeout) as response:
         content = response.read().decode("utf-8")
     return json.loads(content)
 
@@ -994,13 +1014,100 @@ def _get_matlab_info_from_file():
         return json.load(content)
 
 
-try:
-    info = _get_matlab_info_from_web()
-    VERSION_TO_RELEASE = info["VERSION_TO_RELEASE"]
-    SUPPORTED_PYTHON_VERSIONS = info["SUPPORTED_PYTHON_VERSIONS"]
-    RELEASE_TO_UPDATE = info["RELEASE_TO_UPDATE"]
-except Exception:
+def _call_with_deadline(func, timeout):
+    # Run `func` in a daemon thread and give up after `timeout` seconds.
+    # (The socket timeout of `urlopen` does not bound DNS resolution.)
+    result = {}
+
+    def target():
+        try:
+            result["value"] = func()
+        except BaseException as e:
+            result["error"] = e
+
+    thread = threading.Thread(
+        target=target, name="matlab_runtime.info", daemon=True
+    )
+    thread.start()
+    thread.join(timeout)
+    if "value" in result:
+        return result["value"]
+    if "error" in result:
+        raise result["error"]
+    raise TimeoutError(f"No answer after {timeout} seconds")
+
+
+def merge_info(bundled, remote):
+    """
+    Merge the remote release registry over the bundled one, per key.
+
+    Parameters
+    ----------
+    bundled, remote : dict[str, dict]
+        Registries, such as the content of `info.json`.
+
+    Returns
+    -------
+    info : dict[str, dict]
+        For each table (e.g. 'SUPPORTED_PYTHON_VERSIONS'), entries of
+        `remote` override those of `bundled`; entries that only exist
+        in `bundled` are kept. Malformed remote tables are ignored.
+    """
+    info = {
+        key: dict(value) if isinstance(value, dict) else value
+        for key, value in bundled.items()
+    }
+    if not isinstance(remote, dict):
+        return info
+    for key, value in remote.items():
+        if not isinstance(value, dict):
+            continue
+        base = info.get(key, {})
+        info[key] = {**(base if isinstance(base, dict) else {}), **value}
+    return info
+
+
+def load_info(offline=None, timeout=None):
+    """
+    Load the registry of MATLAB releases (`info.json`).
+
+    The registry bundled with the package is updated with the most
+    recent registry from GitHub, unless offline. Failures (no network,
+    timeout, malformed file) silently fall back to the bundled registry.
+
+    Parameters
+    ----------
+    offline : bool, optional
+        Do not fetch the remote registry.
+        Default: `$MATLAB_RUNTIME_OFFLINE` (e.g., '1').
+    timeout : float, optional
+        Maximum time (in seconds) spent fetching the remote registry.
+        A non-positive value means offline.
+        Default: `$MATLAB_RUNTIME_INFO_TIMEOUT`, or 3 seconds.
+
+    Returns
+    -------
+    info : dict[str, dict]
+        Tables 'VERSION_TO_RELEASE', 'SUPPORTED_PYTHON_VERSIONS' and
+        'RELEASE_TO_UPDATE'.
+    """
     info = _get_matlab_info_from_file()
-    VERSION_TO_RELEASE = info["VERSION_TO_RELEASE"]
-    SUPPORTED_PYTHON_VERSIONS = info["SUPPORTED_PYTHON_VERSIONS"]
-    RELEASE_TO_UPDATE = info["RELEASE_TO_UPDATE"]
+    if offline is None:
+        offline = _env_flag("MATLAB_RUNTIME_OFFLINE")
+    if timeout is None:
+        timeout = _info_timeout()
+    if offline or timeout <= 0:
+        return info
+    try:
+        remote = _call_with_deadline(
+            lambda: _get_matlab_info_from_web(timeout), timeout
+        )
+    except Exception:
+        return info
+    return merge_info(info, remote)
+
+
+info = load_info()
+VERSION_TO_RELEASE = info["VERSION_TO_RELEASE"]
+SUPPORTED_PYTHON_VERSIONS = info["SUPPORTED_PYTHON_VERSIONS"]
+RELEASE_TO_UPDATE = info["RELEASE_TO_UPDATE"]
