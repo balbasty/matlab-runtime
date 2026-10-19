@@ -38,6 +38,8 @@ from .utils import (
     guess_pymatlab_version,
     url_download,
     ctf_required_products,
+    running_under_mwpython,
+    MODE_ENV,
     installer_products,
     make_installer_input,
     resolve_products,
@@ -364,12 +366,80 @@ _CPP = "matlabruntimeforpython_abi3"
 _SDK = "matlab_pysdk.runtime"
 _MLB = "matlab"
 
+# --- runtime mode -----------------------------------------------------
+# "inprocess": the MATLAB SDK is loaded in this process.
+# "remote":    it runs in a worker process (`matlab_runtime.remote`).
+# Once chosen (by the first call to `init`, `import_deployed` or
+# `init_runtime`), the mode is fixed for the process.
+_MODES = ("inprocess", "remote", "auto")
+_MODE = {"mode": None}
+
+
+def _resolve_mode(mode=None):
+    """
+    Mode that `mode` (or `$MATLAB_RUNTIME_MODE`, or "auto") stands for.
+
+    "auto" is "remote" on macOS, unless this interpreter is `mwpython`
+    (in which case the SDK can be loaded in-process), and "inprocess"
+    on other platforms.
+    """
+    if mode is None:
+        mode = os.environ.get(MODE_ENV, "") or "auto"
+    key = str(mode).strip().lower()
+    if key not in _MODES:
+        raise ValueError(
+            f"Unknown MATLAB runtime mode {mode!r}: expected one of "
+            f"{', '.join(map(repr, _MODES))} (argument `mode`, or "
+            f"environment variable {MODE_ENV})."
+        )
+    if key == "auto":
+        if sys.platform == "darwin" and not running_under_mwpython():
+            return "remote"
+        return "inprocess"
+    return key
+
+
+def _use_mode(mode=None):
+    """
+    Choose the mode of a call to `init`, `import_deployed` or
+    `init_runtime`, and fix it for the process.
+
+    Once a mode is fixed, `mode=None` and `mode="auto"` select it (and
+    `$MATLAB_RUNTIME_MODE` is no longer read), while another explicit
+    mode raises a RuntimeError.
+    """
+    current = _MODE["mode"]
+    if current is not None and mode is not None:
+        wanted = _resolve_mode(mode)
+        if str(mode).strip().lower() == "auto":
+            wanted = current
+    elif current is not None:
+        wanted = current
+    else:
+        wanted = _resolve_mode(mode)
+    if current is None:
+        if wanted == "remote" and (
+            _INITIALIZED["SDK"] or _INITIALIZED["RUNTIME"]
+        ):
+            raise RuntimeError(
+                "The MATLAB SDK has already been initialized in this "
+                "process: it cannot be used in 'remote' mode."
+            )
+        _MODE["mode"] = wanted
+    elif wanted != current:
+        raise RuntimeError(
+            f"The MATLAB runtime is already used in {current!r} mode in "
+            f"this process: it cannot be used in {wanted!r} mode as well."
+        )
+    return wanted
+
 
 def init(
     version="latest_installed",
     install_if_missing=False,
     prefix=None,
     auto_answer=False,
+    mode=None,
 ):
     """
     Set current environment so that the MATLAB Python SDK is properly
@@ -396,11 +466,32 @@ def init(
     auto_answer : bool
         Default answer to all questions.
         **This entails accepting the MATLAB Runtime license agreement.**
+    mode : {"inprocess", "remote", "auto"}, optional
+        Where the MATLAB SDK runs:
+
+        * "inprocess": in this process.
+        * "remote": in a worker process, through `matlab_runtime.remote`
+          (`init` then calls `remote.init` with the same arguments).
+          Deployed functions then return numpy arrays, numbers,
+          strings, lists and dicts instead of `matlab.*` objects, and
+          any other object (e.g., MATLAB objects and function handles)
+          as a `remote.RemoteHandle` (see `remote.is_matlab_object`).
+        * "auto": "remote" on macOS, unless this interpreter is
+          `mwpython` (e.g., started with `mpython`); "inprocess" on
+          other platforms.
+
+        Default: the mode already used in this process, else the
+        environment variable `MATLAB_RUNTIME_MODE`, else "auto".
+        The mode is fixed for the process by the first call to `init`,
+        `import_deployed` or `init_runtime`.
 
     Raises
     ------
     ValueError
-        If another release of the SDK has already been initialized.
+        If another release of the SDK has already been initialized,
+        or if `mode` is not a valid mode.
+    RuntimeError
+        If the runtime is already used in another mode in this process.
     RuntimeNotFoundError
         If no matching runtime is installed (and not `install_if_missing`).
     UnsupportedPythonError
@@ -413,6 +504,11 @@ def init(
         If the release is not listed in `utils.SUPPORTED_PYTHON_VERSIONS`,
         so that compatibility with the running Python cannot be checked.
     """
+    # --- remote mode  -------------------------------------------------
+    if _use_mode(mode) == "remote":
+        from . import remote
+        return remote.init(version, install_if_missing, prefix, auto_answer)
+
     # --- prepare  -----------------------------------------------------
     arch = guess_arch()
     version = version or "latest_installed"
@@ -529,7 +625,7 @@ class _PathInitializer:
         self.cppext_handle = importlib.import_module(_CPP)
 
 
-def import_deployed(*packages, option_list=tuple()):
+def import_deployed(*packages, option_list=tuple(), mode=None):
     """
     Initialize compiled MATLAB packages so that they can be used from python.
 
@@ -543,10 +639,16 @@ def import_deployed(*packages, option_list=tuple()):
         Python package that contains a compiled MATLAB package (a ctf file).
     option_list : list[str]
         Options passed to MATLAB, if the runtime is not initialized yet.
+    mode : {"inprocess", "remote", "auto"}, optional
+        Where the MATLAB SDK runs (see `init`). In "remote" mode, the
+        packages are imported in the worker process, and handles to
+        them (`remote.RemoteHandle`) are returned: their functions
+        return numpy arrays, numbers, strings, lists and dicts instead
+        of `matlab.*` objects.
 
     Returns
     -------
-    *modules : module
+    *modules : module | remote.RemoteHandle
         Imported MATLAB modules.
 
     Raises
@@ -554,7 +656,13 @@ def import_deployed(*packages, option_list=tuple()):
     ValueError
         If the packages were compiled with a release that differs from
         the one already initialized (or from each other).
+    RuntimeError
+        If the runtime is already used in another mode in this process.
     """
+    if _use_mode(mode) == "remote":
+        from . import remote
+        return remote.import_deployed(*packages, option_list=option_list)
+
     release = _deployed_release(packages)
     sdk_release = _INITIALIZED["SDK"]
     if release and sdk_release and release != sdk_release:
@@ -589,15 +697,28 @@ def import_deployed(*packages, option_list=tuple()):
     return handles[0] if len(handles) == 1 else tuple(handles)
 
 
-def init_runtime(option_list=tuple(), error_if_already_init=False):
+def init_runtime(option_list=tuple(), error_if_already_init=False,
+                 mode=None):
     """
-    Initialize the MATLAB runtime. The SDK must have already been initialized.
+    Initialize the MATLAB runtime.
+
+    If the SDK is not initialized yet, it is initialized with `init()`.
 
     Parameters
     ----------
     option_list : list[str]
         Options passed to MATLAB.
+    error_if_already_init : bool
+        Raise a ValueError if the runtime is already initialized.
+    mode : {"inprocess", "remote", "auto"}, optional
+        Where the MATLAB SDK runs (see `init`). In "remote" mode, the
+        runtime is initialized in the worker process (which is started,
+        with `init()`, if needed).
     """
+    if _use_mode(mode) == "remote":
+        from . import remote
+        return remote._init_runtime(option_list, error_if_already_init)
+
     if _INITIALIZED.get("RUNTIME", False):
         if error_if_already_init:
             raise ValueError("MATLAB runtime already initialized")
@@ -634,7 +755,17 @@ def init_runtime(option_list=tuple(), error_if_already_init=False):
 def terminate_runtime():
     """
     Terminate runtime.
+
+    In "remote" mode (see `init`), stop the worker process, which
+    terminates its runtime. Handles to its objects are then invalid;
+    a later call to `init` or `import_deployed` starts a new worker.
+    The mode remains "remote".
     """
+    if _MODE["mode"] == "remote":
+        if "matlab_runtime.remote" in sys.modules:
+            from . import remote
+            remote.shutdown()
+        return
     if _INITIALIZED["RUNTIME"]:
         cppext = importlib.import_module("matlabruntimeforpython_abi3")
         cppext.terminateApplication()

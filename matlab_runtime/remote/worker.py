@@ -110,18 +110,21 @@ class SdkBackend(Backend):
     """Backend that uses the real MATLAB SDK through `matlab_runtime.impl`.
 
     The runtime is terminated by `impl`'s own atexit handler when the
-    worker exits.
+    worker exits. `impl` is always used in-process (`mode="inprocess"`):
+    the worker must never start a worker of its own.
     """
 
     def init(self, **kwargs):
         """Initialize the SDK with `matlab_runtime.impl.init`."""
         from .. import impl
-        impl.init(**kwargs)
+        impl.init(**kwargs, mode="inprocess")
 
     def init_runtime(self, option_list=(), error_if_already_init=False):
         """Initialize the runtime with `matlab_runtime.impl.init_runtime`."""
         from .. import impl
-        impl.init_runtime(tuple(option_list), error_if_already_init)
+        impl.init_runtime(
+            tuple(option_list), error_if_already_init, mode="inprocess"
+        )
 
     def import_package(self, name, file, option_list=()):
         """
@@ -146,7 +149,9 @@ class SdkBackend(Backend):
             module = importlib.util.module_from_spec(spec)
             sys.modules[name] = module
             spec.loader.exec_module(module)
-        return impl.import_deployed(module, option_list=tuple(option_list))
+        return impl.import_deployed(
+            module, option_list=tuple(option_list), mode="inprocess"
+        )
 
 
 def load_backend():

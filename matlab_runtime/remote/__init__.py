@@ -18,6 +18,10 @@ Numbers, strings, numpy arrays (MATLAB arrays) and lists, tuples and
 dicts of them are copied back; anything else (MATLAB objects, but also
 python sets, ...) stays in the worker and is returned as a
 `RemoteHandle`.
+
+`matlab_runtime.init` and `matlab_runtime.import_deployed` use this
+module in "remote" mode (the default on macOS outside `mwpython`, see
+their `mode` argument).
 """
 import atexit
 import sys
