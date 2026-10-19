@@ -261,13 +261,15 @@ def install(
     if not op.exists(op.join(path, "VersionInfo.xml")):
         if op.exists(path):
             print(
-                "Runtime not found where it is expected (v):",
-                os.listdir(path)
+                f"Runtime not found where it is expected: {path} exists "
+                f"but has no VersionInfo.xml. It contains:",
+                sorted(os.listdir(path))
             )
         elif op.exists(prefix):
             print(
-                "Runtime not found where it is expected (p):",
-                os.listdir(prefix)
+                f"Runtime not found where it is expected: {path} does not "
+                f"exist. {prefix} contains:",
+                sorted(os.listdir(prefix))
             )
         if log and "End - Successful" in log:
             print("Installer log (tail):\n", log[-3000:])
@@ -277,7 +279,9 @@ def install(
                 out = (out or b"").decode(errors="replace").strip()
                 if out:
                     print(f"Installer {name} (tail):\n", out[-3000:])
-        raise FileNotFoundError("Runtime not found where it is expected.")
+        raise FileNotFoundError(
+            f"Runtime not found where it is expected: {path}"
+        )
 
     # --- patch --------------------------------------------------------
     if arch[:3] == "mac" and patch is not False:
