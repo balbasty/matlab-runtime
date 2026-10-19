@@ -1,5 +1,6 @@
 """Tests of matlab_runtime.remote, using a fake MATLAB SDK (no MATLAB)."""
 import _thread
+import errno
 import gc
 import io
 import os
@@ -19,7 +20,9 @@ import pytest
 np = pytest.importorskip("numpy")
 
 from matlab_runtime import remote  # noqa: E402
-from matlab_runtime.remote import client, protocol, worker  # noqa: E402
+from matlab_runtime.remote import (  # noqa: E402
+    client, convert, protocol, worker,
+)
 from matlab_runtime.utils import python_argv  # noqa: E402
 
 from ._procs import pid_alive  # noqa: E402
@@ -330,6 +333,42 @@ def test_shared_memory_disabled(fake_env, monkeypatch):
     x = np.random.rand(10000)
     assert (pkg.ident(x) == x).all()
     assert pkg.big(10000).shape == (1, 10000)
+
+
+def test_shared_memory_no_space(pkg, shm_names, monkeypatch):
+    # Without room for a segment, arrays are sent inline
+    created = []
+
+    def no_space(shm):
+        created.append(shm.name)
+        raise OSError(errno.ENOSPC, "No space left on device")
+
+    monkeypatch.setattr(convert, "_reserve", no_space)
+    shared = convert.SharedArrays(4096)
+    x = np.random.rand(10000)
+    assert shared.export(x) is x
+    assert shared.segments == []
+    assert len(created) == 1 and leaked(created) == []
+    assert (pkg.ident(x) == x).all()
+    assert len(created) == 2 and leaked(created) == []
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="Linux")
+def test_shared_memory_no_space_linux(monkeypatch):
+    def enospc(*args):
+        raise OSError(errno.ENOSPC, "No space left on device")
+
+    x = np.random.rand(10000)
+    shared = convert.SharedArrays(4096)
+    monkeypatch.setattr(os, "posix_fallocate", enospc)
+    assert shared.export(x) is x
+    assert shared.segments == []
+    # Fallback to the free space of /dev/shm
+    monkeypatch.delattr(os, "posix_fallocate")
+    monkeypatch.setattr(os, "statvfs", lambda path: mock.Mock(
+        f_bavail=0, f_frsize=4096))
+    assert shared.export(x) is x
+    assert shared.segments == []
 
 
 def test_nargout(pkg):

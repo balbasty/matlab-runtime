@@ -8,6 +8,7 @@ Conversion of values to and from their wire representation.
 
 numpy is imported lazily so that the client does not depend on it.
 """
+import errno
 import os
 import secrets
 import sys
@@ -114,6 +115,24 @@ def is_numpy_scalar(obj):
 # ----------------------------------------------------------------------
 
 
+def _reserve(shm):
+    """
+    Allocate the pages of a new segment, or raise `OSError`.
+
+    On Linux, segments live in the tmpfs `/dev/shm` and are only
+    truncated to size: writing past its free space raises SIGBUS.
+    """
+    if not sys.platform.startswith("linux"):
+        return
+    fd = getattr(shm, "_fd", -1)
+    if isinstance(fd, int) and fd >= 0 and hasattr(os, "posix_fallocate"):
+        os.posix_fallocate(fd, 0, shm.size)
+        return
+    st = os.statvfs("/dev/shm")
+    if st.f_bavail * st.f_frsize < shm.size:
+        raise OSError(errno.ENOSPC, os.strerror(errno.ENOSPC), "/dev/shm")
+
+
 class SharedArrays:
     """
     Shared memory segments created by one side for one message.
@@ -151,8 +170,10 @@ class SharedArrays:
         Return `array` or, if it is large, a `ShmArray` describing it.
 
         The array is copied into a new segment, which is kept until
-        `release()` is called. Arrays below the threshold, and arrays
-        of objects, are returned unchanged (and are then pickled).
+        `release()` is called. Arrays below the threshold, arrays of
+        objects, and arrays for which no segment can be allocated
+        (e.g. `/dev/shm` is full) are returned unchanged (and are then
+        pickled).
 
         Parameters
         ----------
@@ -176,7 +197,21 @@ class SharedArrays:
             kwargs["track"] = False
         # POSIX names are limited to 31 characters on macOS
         name = "mlrt" + secrets.token_hex(8)
-        shm = SharedMemory(name, create=True, size=array.nbytes, **kwargs)
+        try:
+            shm = SharedMemory(name, create=True, size=array.nbytes, **kwargs)
+        except OSError:
+            return array
+        try:
+            _reserve(shm)
+        except OSError:
+            # Not enough room (e.g. the small /dev/shm of a container):
+            # send the array inline rather than die of SIGBUS.
+            try:
+                shm.close()
+                shm.unlink()
+            except OSError:
+                pass
+            return array
         self.segments.append(shm)
         order = "C"
         if array.flags.f_contiguous and not array.flags.c_contiguous:

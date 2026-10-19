@@ -159,8 +159,13 @@ def init(
         Maximum time (in seconds) given to the worker to start.
     shm_threshold : int, optional
         Arrays of at least this many bytes are exchanged through shared
-        memory. 0 disables shared memory. Default: environment variable
-        `MATLAB_RUNTIME_SHM_THRESHOLD`, else 1 MiB.
+        memory. 0 (or a negative value) disables shared memory.
+        Default: environment variable `MATLAB_RUNTIME_SHM_THRESHOLD`,
+        else 1 MiB. On Linux, segments live in `/dev/shm`, which is
+        only 64 MB by default in Docker/Podman (`--shm-size=...` or
+        `--ipc=host`) and Kubernetes (`emptyDir` with
+        `medium: Memory` mounted at `/dev/shm`). Arrays that do not
+        fit are sent inline instead (slower).
 
     Raises
     ------
