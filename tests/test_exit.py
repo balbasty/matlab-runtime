@@ -18,7 +18,7 @@ import textwrap
 
 import pytest
 
-from matlab_runtime.utils import guess_arch
+from matlab_runtime.utils import guess_arch, python_argv
 
 from .test_runtime_discovery import fake_runtime
 
@@ -171,8 +171,9 @@ def test_runtime_terminated_before_unconfigure(tmp_path, hook):
     env["FAKE_RUNTIME_LOG"] = str(log)
     env["FAKE_RUNTIME_PREFIX"] = str(prefix)
     env.pop("MATLAB_RUNTIME_MODE", None)
-    argv = [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider",
-            "--rootdir", str(inner), "test_inner.py"]
+    # python_argv: under mwpython (macOS CI), the trailing -mwpythonver
+    argv = python_argv("-m", "pytest", "-q", "-p", "no:cacheprovider",
+                       "--rootdir", str(inner), "test_inner.py")
     if hook:
         argv[3:3] = ["-p", "tests.conftest"]
     proc = subprocess.run(
