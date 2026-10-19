@@ -158,16 +158,19 @@ def find_mcrroot(variant="latest_installed", arch=None):
 
 
 def dyld_fallback_library_path(mcrroot, arch, existing=None):
-    """Same search path as `mpython` (matlab_runtime.cli)."""
+    """Same search path as `mpython` (matlab_runtime.cli).
+
+    DYLD paths are macOS-only, so entries are always joined with ":".
+    """
     if existing is None:
         existing = os.environ.get("DYLD_FALLBACK_LIBRARY_PATH", "")
-    return os.pathsep.join(_unique([
+    return ":".join(_unique([
         ".",
         f"{mcrroot}/runtime/{arch}",
         f"{mcrroot}/bin/{arch}",
         f"{mcrroot}/sys/os/{arch}",
         op.join(sys.prefix, "lib"),
-        *[x for x in existing.split(os.pathsep) if x],
+        *[x for x in existing.split(":") if x],
         "/usr/local/lib",
         "/usr/lib",
     ]))
