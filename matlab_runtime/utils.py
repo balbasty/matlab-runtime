@@ -61,6 +61,11 @@ class UnsupportedPythonError(VersionNotFoundError):
 # ----------------------------------------------------------------------
 
 
+# Environment variable that selects how `init` / `import_deployed` run
+# the MATLAB SDK ("inprocess", "remote" or "auto").
+MODE_ENV = "MATLAB_RUNTIME_MODE"
+
+
 def mwpython_version_args(version=None):
     """
     Trailing arguments required by MathWorks' `mwpython` binary.

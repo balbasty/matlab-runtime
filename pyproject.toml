@@ -16,7 +16,7 @@ dependencies = []
 dynamic = ["version"]
 
 [project.optional-dependencies]
-test = ["pytest"]
+test = ["pytest", "numpy", "matplotlib", "ipykernel", "jupyter_client"]
 
 [project.urls]
 Homepage = "https://github.com/balbasty/matlab-runtime"
@@ -36,7 +36,7 @@ requires = [
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-packages = ["matlab_runtime"]
+packages = ["matlab_runtime", "matlab_runtime.remote"]
 
 [tool.versioningit]
 default-version = "0+unknown"
