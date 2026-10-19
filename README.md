@@ -358,13 +358,19 @@ mpython-native -bypass-guard myscript.py  # opt-in, see below
 ```
 
 * `-mlstartup`/`-nojvm` are forwarded to `init_runtime` through the
-  `MATLAB_RUNTIME_STARTUP_OPTIONS` environment variable.
+  `MATLAB_RUNTIME_NATIVE_STARTUP_OPTIONS` environment variable.
 * `-diagnose-guard` prints the "must run under mwpython" checks found in
   the MathWorks Python SDK; `-bypass-guard` neutralizes them *in memory
-  only* (logged; files on disk are never modified). The same can be
-  enabled with `MATLAB_RUNTIME_DIAGNOSE_GUARD=1` /
-  `MATLAB_RUNTIME_BYPASS_GUARD=1` when calling `matlab_runtime.init()`
-  from a plain interpreter.
+  only* (only `raise`/`sys.exit` statements whose message mentions
+  mwpython; each replacement is logged; files on disk are never
+  modified).
+* The `MATLAB_RUNTIME_NATIVE_*` environment variables are only honoured
+  while `mpython-native` is running in the current process: in a plain
+  interpreter (including child processes that inherit them) they are
+  ignored, and `matlab_runtime` behaves as usual. To try the guard bypass
+  from a plain interpreter, call
+  `matlab_runtime.native.install_guard_bypass()` before
+  `matlab_runtime.init()`.
 * `-no-reexec`, `-no-runloop` and `-hard-exit` help isolating where a
   failure or hang happens. Run `mpython-native -help` for all options.
 * Limitations: your code runs on a non-main thread (`signal.signal` fails,

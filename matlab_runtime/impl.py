@@ -446,13 +446,8 @@ def init(
     sys.path.insert(0, sdk)
     sys.path.insert(0, ext)
 
-    # --- optional mwpython-guard diagnostic / bypass (experimental) ---
-    if _env_flag("MATLAB_RUNTIME_DIAGNOSE_GUARD"):
-        from . import native
-        native.diagnose_guard(path)
-    if _env_flag("MATLAB_RUNTIME_BYPASS_GUARD"):
-        from . import native
-        native.install_guard_bypass()
+    # --- mwpython-guard diagnostic / bypass (experimental) -----------
+    _native_guard_hooks(path)
 
     # --- imports  -----------------------------------------------------
     importlib.import_module(_CPP)
@@ -486,10 +481,24 @@ def _env_flag(name):
 
 
 def _native_launcher_state():
-    # State of the experimental launcher (matlab_runtime.native),
-    # only if it has been imported (never import it here).
+    # State of the experimental launcher (matlab_runtime.native), or {}
+    # unless `mpython-native` is actually running in this process
+    # (never import it here). Environment variables alone (e.g. inherited
+    # by child processes) never activate any launcher-specific behaviour.
     native = sys.modules.get(__name__.rpartition(".")[0] + ".native")
-    return getattr(native, "STATE", None) or {}
+    state = getattr(native, "STATE", None) or {}
+    return state if state.get("active") else {}
+
+
+def _native_guard_hooks(path):
+    # Only honoured inside the experimental `mpython-native` launcher.
+    if not _native_launcher_state():
+        return
+    native = sys.modules[__name__.rpartition(".")[0] + ".native"]
+    if _env_flag("MATLAB_RUNTIME_NATIVE_DIAGNOSE_GUARD"):
+        native.diagnose_guard(path)
+    if _env_flag("MATLAB_RUNTIME_NATIVE_BYPASS_GUARD"):
+        native.install_guard_bypass()
 
 
 class _PathInitializer:
@@ -554,16 +563,21 @@ def init_runtime(option_list=tuple(), error_if_already_init=False):
 
     cppext = importlib.import_module(_CPP)
 
-    # Options set through $MATLAB_RUNTIME_STARTUP_OPTIONS (e.g. by the
-    # experimental `mpython-native` launcher's -mlstartup/-nojvm).
-    env_options = os.environ.get("MATLAB_RUNTIME_STARTUP_OPTIONS", "")
-    env_options = [x.strip() for x in env_options.split(",") if x.strip()]
-    if env_options:
-        option_list = tuple(option_list)
-        option_list += tuple(x for x in env_options if x not in option_list)
+    launcher = _native_launcher_state()
+    if launcher:
+        # Options of the experimental `mpython-native` launcher
+        # (-mlstartup/-nojvm), only honoured inside the launcher.
+        env_options = os.environ.get("MATLAB_RUNTIME_NATIVE_STARTUP_OPTIONS",
+                                     "")
+        env_options = [x.strip() for x in env_options.split(",")
+                       if x.strip()]
+        if env_options:
+            option_list = tuple(option_list)
+            option_list += tuple(x for x in env_options
+                                 if x not in option_list)
 
     arch = guess_arch()
-    if arch[:3] == "mac" and not _native_launcher_state().get("in_runloop"):
+    if arch[:3] == "mac" and not launcher.get("in_runloop"):
         ignored_option_found = False
         for option in option_list:
             if option in ('-nodisplay', '-nojvm'):

@@ -43,19 +43,24 @@ Known limitations
 
 Importing this module has no side effects (no library is loaded).
 
-Environment variables understood by this module and by `matlab_runtime.impl`
------------------------------------------------------------------------------
-MATLAB_RUNTIME_STARTUP_OPTIONS
+Environment variables (set by the launcher's command-line options)
+-----------------------------------------------------------------------
+They are only honoured by `matlab_runtime.impl` while `mpython-native` is
+actually running in the current process (`STATE["active"]`); outside the
+launcher (including in child processes that inherit them) they are
+ignored and `matlab_runtime` behaves exactly as without this module.
+
+MATLAB_RUNTIME_NATIVE_STARTUP_OPTIONS
     Comma-separated runtime startup options (e.g. "-nojvm") merged into the
     `option_list` of `matlab_runtime.init_runtime`.
-MATLAB_RUNTIME_BYPASS_GUARD
+MATLAB_RUNTIME_NATIVE_BYPASS_GUARD
     If truthy, `matlab_runtime.init` installs the (opt-in) in-memory
     neutralizer of the "must run under mwpython" guard of the MathWorks
     Python SDK (see `install_guard_bypass`).
-MATLAB_RUNTIME_DIAGNOSE_GUARD
+MATLAB_RUNTIME_NATIVE_DIAGNOSE_GUARD
     If truthy, `matlab_runtime.init` prints the guard-like code it finds in
     the MathWorks Python SDK sources (see `diagnose_guard`).
-MATLAB_RUNTIME_MCLMCR_MODE
+MATLAB_RUNTIME_NATIVE_MCLMCR_MODE
     Integer passed to `mclmcrInitialize2(int)` if the library does not
     export a plain `mclmcrInitialize()` symbol (default: 0).
 """
@@ -77,13 +82,14 @@ __all__ = [
 ]
 
 ENV_REEXEC = "_MATLAB_RUNTIME_NATIVE_REEXEC"
-ENV_OPTIONS = "MATLAB_RUNTIME_STARTUP_OPTIONS"
-ENV_BYPASS = "MATLAB_RUNTIME_BYPASS_GUARD"
-ENV_DIAGNOSE = "MATLAB_RUNTIME_DIAGNOSE_GUARD"
-ENV_MCLMCR_MODE = "MATLAB_RUNTIME_MCLMCR_MODE"
+ENV_OPTIONS = "MATLAB_RUNTIME_NATIVE_STARTUP_OPTIONS"
+ENV_BYPASS = "MATLAB_RUNTIME_NATIVE_BYPASS_GUARD"
+ENV_DIAGNOSE = "MATLAB_RUNTIME_NATIVE_DIAGNOSE_GUARD"
+ENV_MCLMCR_MODE = "MATLAB_RUNTIME_NATIVE_MCLMCR_MODE"
 
 # Process-wide state (read by `matlab_runtime.impl`).
 STATE = {
+    "active": False,        # True once `main()` runs (launcher process)
     "in_runloop": False,    # True while user code runs inside mclRunMain
     "mcrroot": None,        # Runtime selected by the launcher
     "release": None,        # Release (e.g. "R2024b") selected by launcher
@@ -158,19 +164,20 @@ def find_mcrroot(variant="latest_installed", arch=None):
 
 
 def dyld_fallback_library_path(mcrroot, arch, existing=None):
-    """Same search path as `mpython` (matlab_runtime.cli).
+    """Search path similar to `mpython` (matlab_runtime.cli).
 
+    The current directory (".") is deliberately not included, so that a
+    dylib in the working directory cannot shadow the runtime's libraries.
     DYLD paths are macOS-only, so entries are always joined with ":".
     """
     if existing is None:
         existing = os.environ.get("DYLD_FALLBACK_LIBRARY_PATH", "")
     return ":".join(_unique([
-        ".",
         f"{mcrroot}/runtime/{arch}",
         f"{mcrroot}/bin/{arch}",
         f"{mcrroot}/sys/os/{arch}",
         op.join(sys.prefix, "lib"),
-        *[x for x in existing.split(":") if x],
+        *[x for x in existing.split(":") if x and x != "."],
         "/usr/local/lib",
         "/usr/lib",
     ]))
@@ -222,13 +229,45 @@ def _mclmcr_initialize(lib, verbose):
     return ok
 
 
+def _clamp_exit_code(code):
+    """Map an int to a process exit status without wrapping to 0."""
+    code = int(code)
+    if code == 0:
+        return 0
+    return min(code, 255) if code > 0 else 1
+
+
 def _exit_code(code):
     if code is None:
         return 0
     if isinstance(code, int):
-        return code
+        return _clamp_exit_code(code)
     print(code, file=sys.stderr)
     return 1
+
+
+def _join_user_threads(verbose=False):
+    """
+    Wait for non-daemon threads started by the user target (as the
+    interpreter would at shutdown), so that the runtime is not terminated
+    under their feet. Interruptible by (forwarded) Ctrl-C.
+    """
+    import threading
+    current, main_thread = threading.current_thread(), threading.main_thread()
+    try:
+        while True:
+            pending = [t for t in threading.enumerate()
+                       if t is not current and t is not main_thread
+                       and not t.daemon and t.is_alive()]
+            if not pending:
+                return
+            _log(f"Waiting for non-daemon threads: "
+                 f"{[t.name for t in pending]}", verbose=verbose)
+            for t in pending:
+                while t.is_alive():
+                    t.join(0.25)
+    except KeyboardInterrupt:
+        _log("Interrupted while waiting for non-daemon threads.")
 
 
 def _fresh_main():
@@ -320,22 +359,51 @@ class _SigintForwarder:
         import threading
         if threading.current_thread() is not threading.main_thread():
             return
+        self._fds = ()
+        self._thread = None
+        old_fd = old_handler = None
+        ok = False
         try:
-            self._r, w = os.pipe()
-            os.set_blocking(w, False)
-            self._old_fd = signal.set_wakeup_fd(w)
-            self._old_handler = signal.getsignal(signal.SIGINT)
+            self._r, self._w = self._fds = os.pipe()
+            os.set_blocking(self._w, False)
+            old_fd = signal.set_wakeup_fd(self._w)
+            old_handler = signal.getsignal(signal.SIGINT)
             # A no-op Python handler keeps the C-level handler installed
             # (which trips the wakeup fd) without raising KeyboardInterrupt
             # in the main thread once mclRunMain returns.
             signal.signal(signal.SIGINT, lambda *a: None)
+            self._old_fd, self._old_handler = old_fd, old_handler
+            self._stop = threading.Event()
+            self._thread = threading.Thread(
+                target=self._watch, name="sigint-forwarder", daemon=True
+            )
+            self._thread.start()
+            ok = self.installed = True
         except Exception as e:
             _log(f"WARNING: Ctrl-C forwarding unavailable: {e}")
-            return
-        self._stop = threading.Event()
-        threading.Thread(target=self._watch, name="sigint-forwarder",
-                         daemon=True).start()
-        self.installed = True
+        finally:
+            if not ok:
+                self._restore(old_fd, old_handler)
+                self._close()
+
+    @staticmethod
+    def _restore(old_fd, old_handler):
+        import signal
+        try:
+            if old_fd is not None:
+                signal.set_wakeup_fd(old_fd)
+            if old_handler is not None:
+                signal.signal(signal.SIGINT, old_handler)
+        except Exception:
+            pass
+
+    def _close(self):
+        for fd in getattr(self, "_fds", ()):
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+        self._fds = ()
 
     def _watch(self):
         import ctypes
@@ -367,16 +435,16 @@ class _SigintForwarder:
                 f(tid, KeyboardInterrupt)
 
     def uninstall(self):
-        import signal
         if not self.installed:
             return
-        self._stop.set()
-        try:
-            signal.set_wakeup_fd(self._old_fd)
-            signal.signal(signal.SIGINT, self._old_handler)
-        except Exception:
-            pass
         self.installed = False
+        try:
+            self._stop.set()
+            self._restore(self._old_fd, self._old_handler)
+            if self._thread is not None:
+                self._thread.join(1.0)  # select() times out every 0.25s
+        finally:
+            self._close()
 
 
 def run_in_runloop(lib, target, verbose=False):
@@ -402,10 +470,11 @@ def run_in_runloop(lib, target, verbose=False):
                  f"{STATE['worker_ident']}, main thread? "
                  f"{threading.current_thread() is threading.main_thread()})",
                  verbose=verbose)
-            code = _run_target(target)
+            code = _clamp_exit_code(_run_target(target))
+            _join_user_threads(verbose)
             _cleanup_matlab(verbose)
             result["code"] = code
-            return int(code) & 0xFF if code >= 0 else 1
+            return code
         except BaseException:  # never let anything escape into C
             traceback.print_exc()
             result["code"] = 1
@@ -437,7 +506,7 @@ def run_in_runloop(lib, target, verbose=False):
         sigint.uninstall()
     if result["code"] is None:
         _log("WARNING: mclRunMain returned without running the callback.")
-        return ret if ret else 1
+        return _clamp_exit_code(ret) if ret else 1
     return result["code"]
 
 
@@ -451,12 +520,8 @@ _GUARD_LINE = re.compile(
     r"|main.?thread|mclRunMain",
     re.IGNORECASE,
 )
-_GUARD_RAISE = re.compile(r"mwpython|main.?thread|mclRunMain", re.IGNORECASE)
-_GUARD_TEST = re.compile(
-    r"mwpython|darwin|maci64|maca64|\bmac\b|platform\.system|sys\.platform"
-    r"|executable",
-    re.IGNORECASE,
-)
+# Only statements whose message mentions mwpython are neutralized.
+_GUARD_MESSAGE = re.compile(r"mwpython", re.IGNORECASE)
 _GUARD_PACKAGES = ("matlab_pysdk",)
 
 
@@ -533,12 +598,14 @@ def diagnose_guard(mcrroot=None, context=3, file=None):
 
 def _neutralize_source(source, filename):
     """
-    Return (code_object, report) where `raise` / `sys.exit` statements that
-    look like an mwpython guard are replaced by `warnings.warn(...)`.
+    Return (code_object, report) where `raise X` / `sys.exit(...)`
+    statements that look like an mwpython guard are replaced by
+    `warnings.warn(...)`.
 
-    A statement is replaced if it mentions mwpython / the main thread, or
-    if it sits directly in the body of an `if` whose test mentions
-    darwin / mac / mwpython / platform / executable.
+    A statement is replaced only if a string constant in the raised /
+    exit expression, or in the test of the `if` whose body directly
+    contains it, mentions "mwpython" (case-insensitive). Bare `raise`
+    (re-raise) statements are never touched.
     """
     import ast
 
@@ -552,15 +619,27 @@ def _neutralize_source(source, filename):
             s = lines[node.lineno - 1]
         return s or ""
 
-    def is_guard(stmt, guarded):
-        is_exit = (
+    def mentions_mwpython(node):
+        return node is not None and any(
+            isinstance(n, ast.Constant) and isinstance(n.value, str)
+            and _GUARD_MESSAGE.search(n.value)
+            for n in ast.walk(node)
+        )
+
+    def is_guard(stmt, test):
+        if isinstance(stmt, ast.Raise):
+            if stmt.exc is None:        # bare re-raise: never touched
+                return False
+            expr = stmt.exc
+        elif (
             isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Call)
             and re.fullmatch(r"(sys\.|os\.)?_?exit|quit",
                              seg(stmt.value.func)) is not None
-        )
-        if not (isinstance(stmt, ast.Raise) or is_exit):
+        ):
+            expr = stmt.value
+        else:
             return False
-        return guarded or bool(_GUARD_RAISE.search(seg(stmt)))
+        return mentions_mwpython(expr) or mentions_mwpython(test)
 
     def warning(stmt):
         msg = (f"matlab_runtime bypassed a suspected mwpython guard at "
@@ -571,13 +650,11 @@ def _neutralize_source(source, filename):
     def visit(node):
         for field, val in ast.iter_fields(node):
             if isinstance(val, list) and val and isinstance(val[0], ast.stmt):
-                guarded = (
-                    isinstance(node, ast.If) and field == "body"
-                    and bool(_GUARD_TEST.search(seg(node.test)))
-                )
+                test = (node.test if isinstance(node, ast.If)
+                        and field == "body" else None)
                 new = []
                 for stmt in val:
-                    if is_guard(stmt, guarded):
+                    if is_guard(stmt, test):
                         report.append((stmt.lineno, seg(stmt)))
                         new.append(warning(stmt))
                     else:
@@ -702,7 +779,7 @@ Arguments:
     -variant vrt         : MATLAB runtime version to use (latest installed)
     -mlstartup opt[,opt] : runtime startup options, forwarded to
                            matlab_runtime.init_runtime via
-                           $MATLAB_RUNTIME_STARTUP_OPTIONS
+                           $MATLAB_RUNTIME_NATIVE_STARTUP_OPTIONS
     -nojvm               : shortcut for -mlstartup -nojvm
     -bypass-guard        : opt-in in-memory neutralizer of the SDK's
                            "must use mwpython" guard (logged)
@@ -790,6 +867,9 @@ def main(args=None):
         print("mpython-native is only meant to be used on macOS.",
               file=sys.stderr)
         return 10
+    # From here on, this process *is* the launcher: enables the
+    # launcher-only hooks of matlab_runtime.impl.
+    STATE["active"] = True
     reexeced = _truthy(os.environ.get(ENV_REEXEC))
 
     try:
@@ -864,6 +944,7 @@ def main(args=None):
         _log("-no-runloop: running target on the main thread",
              verbose=verbose)
         code = _run_target(o["target"])
+        _join_user_threads(verbose)
         _cleanup_matlab(verbose)
     else:
         try:
@@ -878,7 +959,7 @@ def main(args=None):
     if o["hard_exit"]:
         sys.stdout.flush()
         sys.stderr.flush()
-        os._exit(code)
+        os._exit(_clamp_exit_code(code))
     return code
 
 

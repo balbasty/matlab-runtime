@@ -384,8 +384,14 @@ step(f"start: python={sys.executable} main_thread="
      f"{os.environ.get('DYLD_FALLBACK_LIBRARY_PATH', '<unset>')[:120]}")
 import matlab_runtime
 step(f"imported matlab_runtime from {matlab_runtime.__file__}")
+if os.environ.get("DIAG_BYPASS_GUARD"):
+    # outside mpython-native, MATLAB_RUNTIME_NATIVE_* variables are
+    # ignored: install the (logged, in-memory) guard bypass explicitly
+    from matlab_runtime import native as _native
+    _native.install_guard_bypass()
+    step("guard bypass installed explicitly")
 opts = [x for x in os.environ.get("DIAG_OPTIONS", "").split(",") if x]
-env_opts = os.environ.get("MATLAB_RUNTIME_STARTUP_OPTIONS", "")
+env_opts = os.environ.get("MATLAB_RUNTIME_NATIVE_STARTUP_OPTIONS", "")
 version = os.environ.get("DIAG_VARIANT") or "latest_installed"
 step(f"init({version!r})")
 matlab_runtime.init(version)
@@ -539,9 +545,10 @@ def experiments(args, workdir):
         "DIAG_TEST_PACKAGE": pkg,
         "DIAG_TEST_FUNCTION": args.test_function,
         "DIAG_OPTIONS": "",
-        "MATLAB_RUNTIME_STARTUP_OPTIONS": None,
-        "MATLAB_RUNTIME_BYPASS_GUARD": None,
-        "MATLAB_RUNTIME_DIAGNOSE_GUARD": None,
+        "DIAG_BYPASS_GUARD": "",
+        "MATLAB_RUNTIME_NATIVE_STARTUP_OPTIONS": None,
+        "MATLAB_RUNTIME_NATIVE_BYPASS_GUARD": None,
+        "MATLAB_RUNTIME_NATIVE_DIAGNOSE_GUARD": None,
     }
 
     def env(**kw):
@@ -565,7 +572,7 @@ def experiments(args, workdir):
          [py, script], env(DIAG_OPTIONS="-nojvm"), 0),
         ("A2", "option 2: plain python, -nojvm, guard bypass",
          [py, script], env(DIAG_OPTIONS="-nojvm",
-                           MATLAB_RUNTIME_BYPASS_GUARD="1"), 0),
+                           DIAG_BYPASS_GUARD="1"), 0),
         ("A3", "option 2 + DYLD env: launcher -no-runloop, -nojvm, bypass",
          launcher + ["-no-runloop", "-nojvm", "-bypass-guard", script],
          lenv(), 0),
