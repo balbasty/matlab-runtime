@@ -772,9 +772,24 @@ def terminate_runtime():
         _INITIALIZED["RUNTIME"] = False
 
 
-@atexit.register
-def __atexit():
-    for package in _DEPLOYED_MODULES.values():
-        if package() is not None:
-            package().terminate()
+def _cleanup():
+    """
+    Terminate the deployed packages that are still alive, then the
+    runtime (registered with `atexit`).
+
+    Safe to call several times: packages are only terminated once (the
+    registry is emptied), and `terminate_runtime` does nothing once the
+    runtime is terminated. It can therefore be called before `atexit`
+    runs it, e.g. while signal handlers installed by the runtime are
+    still in place (see `tests/conftest.py`).
+    """
+    packages = [ref() for ref in _DEPLOYED_MODULES.values()]
+    _DEPLOYED_MODULES.clear()
+    for package in packages:
+        if package is not None:
+            package.terminate()
+    del packages
     terminate_runtime()
+
+
+atexit.register(_cleanup)
