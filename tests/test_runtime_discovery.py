@@ -222,6 +222,20 @@ def test_runtime_path_as_release_folder(env, monkeypatch):
     assert real_guess_prefix() == str(env["tmp"] / "custom")
 
 
+def test_runtime_path_release_folder_pins(env, monkeypatch):
+    # A release folder in MATLAB_RUNTIME_PATH wins over newer installs
+    # elsewhere with 'latest_installed', but not over an explicit release.
+    newer = fake_runtime(env["standard"] / "MATLAB_Runtime" / "R2025a",
+                         "R2025a")
+    path = fake_runtime(env["tmp"] / "custom" / "R2024b", "R2024b")
+    monkeypatch.setenv("MATLAB_RUNTIME_PATH", path)
+    assert resolve_runtime() == ("R2024b", path)
+    assert resolve_runtime("R2025a") == ("R2025a", newer)
+    monkeypatch.delenv("MATLAB_RUNTIME_PATH")
+    assert resolve_runtime() == ("R2025a", newer)
+    assert resolve_runtime(prefix=path) == ("R2024b", path)
+
+
 def test_find_runtime_in_prefix_release_folder(tmp_path):
     path = fake_runtime(tmp_path / "R2024b", "R2024b")
     assert find_runtime_in_prefix("R2024b", path) == path

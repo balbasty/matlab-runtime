@@ -341,7 +341,9 @@ folder names.
   support the running Python (according to
   `utils.SUPPORTED_PYTHON_VERSIONS`; releases missing from that table
   are accepted, with a warning in `init()`). On ties, the location found
-  first (_e.g._, `prefix`) wins.
+  first (_e.g._, `prefix`) wins. If `prefix` (or `$MATLAB_RUNTIME_PATH`)
+  is a release folder, that installation is used, even if a more recent
+  release is installed elsewhere.
 * `import_deployed()` (without a prior `init()`) uses the release the
   package was compiled with.
 * If nothing matches, a `RuntimeNotFoundError` (or `UnsupportedPythonError`)

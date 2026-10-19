@@ -996,7 +996,8 @@ def resolve_runtime(
     Candidates are listed by `iter_installations(prefix)`. When several
     candidates match, the most recent release wins; on ties, the
     candidate found first (i.e., in `prefix` / `$MATLAB_RUNTIME_PATH`)
-    wins.
+    wins. If `prefix` (or `$MATLAB_RUNTIME_PATH`) is itself a release
+    folder, that installation is used with 'latest_installed'.
 
     Parameters
     ----------
@@ -1069,6 +1070,18 @@ def resolve_runtime(
         ]
     else:
         compatible = candidates
+
+    if compatible and target is None:
+        # An explicit release folder (`prefix` or `$MATLAB_RUNTIME_PATH`
+        # pointing at a release, not at a prefix) pins the installation.
+        root = prefix
+        if root is None:
+            root = os.environ.get("MATLAB_RUNTIME_PATH", "") or None
+        if root and op.exists(op.join(root, "VersionInfo.xml")):
+            root = op.realpath(root)
+            for x in compatible:
+                if op.realpath(x.path) == root:
+                    return x.release, x.path
 
     if compatible:
         # sorted() is stable, also with reverse=True: ties keep their

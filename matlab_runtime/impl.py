@@ -335,7 +335,7 @@ def uninstall(version=None, prefix=None, auto_answer=False):
     if version.lower() == "all":
         rmdir = prefix
     else:
-        rmdir = op.join(rmdir, version)
+        rmdir = op.join(prefix, version)
 
     # --- uninstall  ---------------------------------------------------
     question = f"Remove directory {rmdir} and its content?"
