@@ -1,4 +1,5 @@
 import glob
+import importlib.util
 import json
 import math
 import os
@@ -335,6 +336,108 @@ def ctf_required_products(ctf):
                 return f.read(name).decode("utf-8").split()
 
     raise ValueError(f"No list of required products found in {ctf}")
+
+
+def ctf_matlab_release(ctf):
+    """
+    MATLAB release that a compiled CTF archive targets.
+
+    A CTF archive can only be run by the MATLAB Runtime of the release
+    that compiled it.
+
+    Parameters
+    ----------
+    ctf : str
+        Path to a CTF file (a zip archive produced by the MATLAB Compiler).
+
+    Returns
+    -------
+    release : str
+        MATLAB release (e.g. 'R2024b').
+
+    Raises
+    ------
+    ValueError
+        If the archive does not contain release information.
+    """
+    with zipfile.ZipFile(ctf) as f:
+        names = f.namelist()
+
+        # Runtime version in the manifest, e.g.
+        # <manifest mcr-major-version="24" mcr-minor-version="2" ...>
+        for name in names:
+            if name.endswith(".META/manifest.xml"):
+                try:
+                    root = ElementTree.fromstring(f.read(name))
+                except ElementTree.ParseError:
+                    continue
+                major = root.get("mcr-major-version")
+                minor = root.get("mcr-minor-version")
+                if major and minor:
+                    return matlab_release(f"{major}.{minor}")
+
+        # Fallback: MathWorks version info of the compiler
+        for name in names:
+            if name.endswith("mwcorePropertiesReleaseInfo.xml"):
+                try:
+                    root = ElementTree.fromstring(f.read(name))
+                except ElementTree.ParseError:
+                    continue
+                release = (root.findtext("release") or "").strip()
+                if release:
+                    return release
+
+    raise ValueError(f"No MATLAB release information found in {ctf}")
+
+
+def deployed_ctf(package):
+    """
+    Find the CTF archive of a compiled (deployed) Python package.
+
+    Like the MATLAB SDK, look for `<package_dir>/<name>.ctf`, where
+    `name` is the last component of the package name. If there is no
+    such file but the package folder contains a single CTF archive,
+    return it.
+
+    Parameters
+    ----------
+    package : module | str
+        Package (or its importable name). A name is located without
+        importing the package itself (only its parents).
+
+    Returns
+    -------
+    ctf : str | None
+        Path to the CTF archive, or None if not found.
+    """
+    if isinstance(package, str):
+        name = package
+        module = sys.modules.get(name)
+        if module is not None:
+            file = getattr(module, "__file__", None)
+        else:
+            try:
+                spec = importlib.util.find_spec(name)
+            except (ImportError, ValueError):
+                spec = None
+            file = getattr(spec, "origin", None)
+    else:
+        name = package.__name__
+        file = getattr(package, "__file__", None)
+    if not file:
+        return None
+    pkgdir = op.dirname(op.abspath(file))
+    for basename in (name.rpartition(".")[2], name):
+        ctf = op.join(pkgdir, basename + ".ctf")
+        if op.isfile(ctf):
+            return ctf
+    try:
+        ctfs = [x for x in os.listdir(pkgdir) if x.endswith(".ctf")]
+    except OSError:
+        return None
+    if len(ctfs) == 1:
+        return op.join(pkgdir, ctfs[0])
+    return None
 
 
 def installer_products(installer_dir):

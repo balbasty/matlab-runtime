@@ -1,6 +1,8 @@
 """Runtime discovery and selection, with fake installation trees."""
 import os
 import os.path as op
+import sys
+import zipfile
 
 import pytest
 
@@ -8,6 +10,8 @@ from matlab_runtime import utils
 from matlab_runtime.utils import (
     RuntimeNotFoundError,
     UnsupportedPythonError,
+    ctf_matlab_release,
+    deployed_ctf,
     find_runtime,
     find_runtime_in_prefix,
     guess_prefix as real_guess_prefix,
@@ -18,6 +22,8 @@ from matlab_runtime.utils import (
     release_key,
     resolve_runtime,
 )
+
+TEST_CTF = op.join(op.dirname(__file__), "_test_runtime", "_test_runtime.ctf")
 
 VERSION_INFO = """<?xml version="1.0" encoding="UTF-8"?>
 <MathWorks_version_info>
@@ -267,3 +273,47 @@ def test_accept(env):
     assert resolve_runtime(accept=has_mwpython) == ("R2024b", path)
     with pytest.raises(RuntimeNotFoundError, match="rejected"):
         resolve_runtime("R2026b", accept=has_mwpython)
+
+
+# --- CTF ----------------------------------------------------------------
+
+
+def test_ctf_release_from_test_runtime():
+    assert ctf_matlab_release(TEST_CTF) == "R2024b"
+
+
+def test_ctf_release_fallback_and_missing(tmp_path):
+    ctf = tmp_path / "pkg.ctf"
+    with zipfile.ZipFile(ctf, "w") as f:
+        f.writestr("metadata/mwcorePropertiesReleaseInfo.xml",
+                   VERSION_INFO.format(version="9.7.0", release="R2019b"))
+    assert ctf_matlab_release(str(ctf)) == "R2019b"
+
+    ctf = tmp_path / "old.ctf"
+    with zipfile.ZipFile(ctf, "w") as f:
+        f.writestr(".META/manifest.xml",
+                   '<manifest mcr-major-version="9" mcr-minor-version="7"/>')
+    assert ctf_matlab_release(str(ctf)) == "R2019b"
+
+    ctf = tmp_path / "empty.ctf"
+    with zipfile.ZipFile(ctf, "w") as f:
+        f.writestr("foo.txt", "")
+    with pytest.raises(ValueError):
+        ctf_matlab_release(str(ctf))
+
+
+def test_deployed_ctf(tmp_path, monkeypatch):
+    from . import _test_runtime
+    assert op.samefile(deployed_ctf(_test_runtime), TEST_CTF)
+    assert op.samefile(deployed_ctf("tests._test_runtime"), TEST_CTF)
+    assert deployed_ctf("not_a_package_xyz") is None
+    assert deployed_ctf("not_a_package_xyz.sub") is None
+
+    # Not imported yet: located without importing it
+    pkg = tmp_path / "mypkg"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("raise ImportError('not importable')")
+    (pkg / "compiled.ctf").write_text("")
+    monkeypatch.syspath_prepend(str(tmp_path))
+    assert op.samefile(deployed_ctf("mypkg"), str(pkg / "compiled.ctf"))
+    assert "mypkg" not in sys.modules
