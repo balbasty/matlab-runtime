@@ -1,3 +1,4 @@
+import glob
 import json
 import math
 import os
@@ -11,6 +12,7 @@ import tempfile
 import zipfile
 import tarfile
 import threading
+from collections import namedtuple
 from datetime import datetime
 from urllib import error, parse, request
 from xml.etree import ElementTree
@@ -40,6 +42,16 @@ class UnsupportedArchError(RuntimeError):
 
 
 class UserInterruptionError(RuntimeError):
+    ...
+
+
+class RuntimeNotFoundError(VersionNotFoundError, FileNotFoundError):
+    """No installed MATLAB Runtime matches the request."""
+    ...
+
+
+class UnsupportedPythonError(VersionNotFoundError):
+    """The requested MATLAB release does not support this Python version."""
     ...
 
 
@@ -550,6 +562,10 @@ def macos_version():
     return ver
 
 
+# Standard installation locations. `{release}` is a glob placeholder: it
+# matches release folders (`R2024b`), legacy runtime folders (`v97`) and
+# full MATLAB installations (`MATLAB_R2024b.app`). The actual release is
+# always read from the installation's `VersionInfo.xml`.
 CANDIDATE_LOCATIONS_BY_OS = {
     "win": [
         "C:\\Program Files\\MATLAB\\MATLAB Runtime\\{release}",
@@ -559,67 +575,465 @@ CANDIDATE_LOCATIONS_BY_OS = {
     ],
     "gln": [
         "/usr/local/MATLAB/MATLAB_Runtime/{release}",
-        "/usr/local/MATLAB/{release}"
+        "/usr/local/MATLAB/{release}",
     ],
     "mac": [
         "/Applications/MATLAB/MATLAB_Runtime/{release}",
         "/Applications/MATLAB_{release}.app",
-        "/Applications/MATLAB/{release}"
-    ]
+        "/Applications/MATLAB_{release}",
+        "/Applications/MATLAB/{release}",
+    ],
 }
+
+_VERSION_INFO = "VersionInfo.xml"
+
+Installation = namedtuple("Installation", ["release", "path", "source"])
+Installation.__doc__ = """
+An installed MATLAB Runtime (or full MATLAB).
+
+Attributes
+----------
+release : str
+    Release read from the installation's `VersionInfo.xml` (e.g. 'R2024b').
+path : str
+    Root of the installation (the folder that contains `VersionInfo.xml`).
+source : {'prefix', 'MATLAB_RUNTIME_PATH', 'MATLAB_PATH', 'standard', 'which'}
+    Where the installation was found.
+"""
+
+
+def release_key(release):
+    """
+    Sort key for MATLAB releases (newest compares greatest).
+
+    Parameters
+    ----------
+    release : str
+        MATLAB release (e.g. 'R2024b', 'R2015aSP1') or version
+        (e.g. '24.2', '9.7').
+
+    Returns
+    -------
+    key : tuple[int, int, str]
+        `(year, half, suffix)`, e.g. `(2024, 2, '')` for 'R2024b'.
+        `(0, 0, '')` if `release` cannot be parsed.
+    """
+    release = str(release)
+    match = re.match(r"R(\d{4})([a-z])(.*)$", release)
+    if not match:
+        try:
+            match = re.match(r"R(\d{4})([a-z])(.*)$", matlab_release(release))
+        except Exception:
+            match = None
+    if not match:
+        return (0, 0, "")
+    year, letter, suffix = match.groups()
+    return (int(year), ord(letter) - ord("a") + 1, suffix)
+
+
+def installation_release(path):
+    """
+    Release of the MATLAB [Runtime] installation rooted at `path`.
+
+    Unlike `guess_matlab_release`, parent folders are not searched:
+    `path` must directly contain `VersionInfo.xml`.
+
+    Parameters
+    ----------
+    path : str
+        Candidate installation folder (e.g. '.../MATLAB_Runtime/R2024b',
+        '.../MATLAB_Runtime/v97' or '/Applications/MATLAB_R2024b.app').
+
+    Returns
+    -------
+    release : str | None
+        Release (e.g. 'R2024b'), or None if `path` is not an installation.
+    """
+    info = op.join(path, _VERSION_INFO)
+    if not op.isfile(info):
+        return None
+    try:
+        tree = ElementTree.parse(info)
+    except (ElementTree.ParseError, OSError):
+        return None
+    release = (tree.findtext("release") or "").strip()
+    if release:
+        return release
+    version = (tree.findtext("version") or "").strip()
+    try:
+        return matlab_release(".".join(version.split(".")[:2]))
+    except Exception:
+        return None
+
+
+def _scan_root(root, source):
+    # A root is either an installation (release folder) or a prefix that
+    # contains installations.
+    release = installation_release(root)
+    if release:
+        yield Installation(release, root, source)
+        return
+    try:
+        names = sorted(os.listdir(root))
+    except OSError:
+        return
+    for name in names:
+        path = op.join(root, name)
+        release = installation_release(path)
+        if release:
+            yield Installation(release, path, source)
+
+
+def _glob_location(template):
+    head, sep, tail = template.partition("{release}")
+    if not sep:
+        return [template]
+    pattern = glob.escape(head) + "*" + glob.escape(tail)
+    return sorted(glob.glob(pattern))
+
+
+def _python_version(python_version):
+    # Normalize a python version (str, tuple, sys.version_info) to "X.Y"
+    if python_version is None:
+        return None
+    if isinstance(python_version, str):
+        return ".".join(python_version.strip().split(".")[:2])
+    return ".".join(map(str, tuple(python_version)[:2]))
+
+
+def iter_installations(prefix=None):
+    """
+    Iterate over installed MATLAB Runtimes and full MATLAB installations.
+
+    Every location below may be a release folder (that contains
+    `VersionInfo.xml`) or a prefix (whose subfolders are release
+    folders). Locations are searched in this order:
+
+    1. `prefix` if provided; otherwise `$MATLAB_RUNTIME_PATH` if set;
+       otherwise the default prefix (`guess_prefix()`).
+    2. `$MATLAB_PATH`, if set.
+    3. Standard locations (`CANDIDATE_LOCATIONS_BY_OS`).
+    4. The installation that contains the `matlab` executable on the PATH.
+
+    Installations found in several locations are only yielded once,
+    in the first (highest priority) location.
+
+    Parameters
+    ----------
+    prefix : str, optional
+        Installation prefix, or a release folder.
+
+    Yields
+    ------
+    installation : Installation
+        Named tuple `(release, path, source)`. The release is read from
+        the installation's `VersionInfo.xml`.
+    """
+    seen = set()
+
+    def unseen(installations):
+        for installation in installations:
+            key = op.normcase(op.realpath(installation.path))
+            if key not in seen:
+                seen.add(key)
+                yield installation
+
+    # 1. prefix / MATLAB_RUNTIME_PATH / default prefix
+    if prefix is not None:
+        root, source = prefix, "prefix"
+    elif os.environ.get("MATLAB_RUNTIME_PATH", ""):
+        root, source = os.environ["MATLAB_RUNTIME_PATH"], "MATLAB_RUNTIME_PATH"
+    else:
+        root, source = guess_prefix(), "prefix"
+    yield from unseen(_scan_root(op.normpath(root), source))
+
+    # 2. MATLAB_PATH
+    if os.environ.get("MATLAB_PATH", ""):
+        root = op.normpath(os.environ["MATLAB_PATH"])
+        yield from unseen(_scan_root(root, "MATLAB_PATH"))
+
+    # 3. Standard locations
+    for template in CANDIDATE_LOCATIONS_BY_OS.get(guess_arch()[:3], []):
+        for path in _glob_location(template):
+            release = installation_release(path)
+            if release:
+                yield from unseen([Installation(release, path, "standard")])
+
+    # 4. `matlab` executable on the PATH (<root>/bin/matlab)
+    path = shutil.which("matlab")
+    if path:
+        path = op.dirname(op.dirname(op.realpath(path)))
+        release = installation_release(path)
+        if release:
+            yield from unseen([Installation(release, path, "which")])
+
+
+def supported_python_versions(release):
+    """
+    Python versions supported by a MATLAB release.
+
+    Parameters
+    ----------
+    release : str
+        MATLAB release (e.g. 'R2024b') or version (e.g. '24.2').
+
+    Returns
+    -------
+    versions : list[str] | None
+        Supported versions (e.g. `['3.9', '3.10']`), or None if the
+        release is not listed in `SUPPORTED_PYTHON_VERSIONS`.
+    """
+    try:
+        release = matlab_release(release)
+    except Exception:
+        return None
+    versions = SUPPORTED_PYTHON_VERSIONS.get(release, None)
+    return None if versions is None else list(versions)
+
+
+def python_supported(release, python_version=None):
+    """
+    Whether a MATLAB release supports a Python version.
+
+    Parameters
+    ----------
+    release : str
+        MATLAB release (e.g. 'R2024b') or version (e.g. '24.2').
+    python_version : str | tuple, optional
+        Python version (e.g. '3.12' or `sys.version_info`).
+        Default: the running Python.
+
+    Returns
+    -------
+    supported : bool | None
+        None if the release is not listed in `SUPPORTED_PYTHON_VERSIONS`.
+    """
+    if python_version is None:
+        python_version = sys.version_info
+    versions = supported_python_versions(release)
+    if versions is None:
+        return None
+    return _python_version(python_version) in versions
+
+
+def _describe_installations(installations):
+    lines = []
+    for inst in installations:
+        versions = supported_python_versions(inst.release)
+        if versions is None:
+            versions = "supported Python versions unknown"
+        elif not versions:
+            versions = "no supported Python version"
+        else:
+            versions = "Python " + ", ".join(versions)
+        lines.append(f"  - {inst.release} at {inst.path} ({versions})")
+    return "\n".join(lines)
+
+
+_NOT_FOUND_HINT = (
+    "Install a runtime with `install_matlab_runtime` (or `install()`), "
+    "or, if it is installed in an unusual location, set the "
+    "MATLAB_RUNTIME_PATH environment variable to its prefix or to the "
+    "release folder itself."
+)
+
+
+def latest_release(python_version=None, arch=None):
+    """
+    Most recent release with an installer available online.
+
+    !!! note
+        This function queries the MathWorks servers.
+
+    Parameters
+    ----------
+    python_version : str | tuple, optional
+        Only consider releases that support this Python version.
+    arch : str, optional
+        Target architecture. Default: `guess_arch()`.
+
+    Returns
+    -------
+    release : str
+
+    Raises
+    ------
+    UnsupportedPythonError
+        If no known release supports `python_version`.
+    """
+    python_version = _python_version(python_version)
+    if python_version is None:
+        return guess_release("latest", arch)
+    releases = sorted(
+        (release for release, versions in SUPPORTED_PYTHON_VERSIONS.items()
+         if python_version in versions),
+        key=release_key, reverse=True,
+    )
+    for release in releases:
+        try:
+            guess_installer(release, arch)
+            return release
+        except VersionNotFoundError:
+            continue
+    raise UnsupportedPythonError(
+        f"No MATLAB Runtime installer supports Python {python_version}."
+    )
+
+
+def resolve_runtime(
+    version="latest_installed",
+    prefix=None,
+    python_version=None,
+    accept=None,
+    missing_ok=False,
+):
+    """
+    Choose an installed MATLAB Runtime (or MATLAB).
+
+    Candidates are listed by `iter_installations(prefix)`. When several
+    candidates match, the most recent release wins; on ties, the
+    candidate found first (i.e., in `prefix` / `$MATLAB_RUNTIME_PATH`)
+    wins.
+
+    Parameters
+    ----------
+    version : str, default="latest_installed"
+        MATLAB release (e.g. 'R2024b') or version (e.g. '24.2', '9.13').
+        If 'latest_installed', use the most recent installed release
+        (that supports `python_version`, if provided).
+        If 'latest', use the most recent release available online
+        (queries the MathWorks servers).
+    prefix : str, optional
+        Installation prefix, or release folder, searched first.
+        Default: `$MATLAB_RUNTIME_PATH` if set, else `guess_prefix()`.
+    python_version : str | tuple, optional
+        Only accept releases that support this Python version
+        (e.g. '3.12' or `sys.version_info`), according to
+        `SUPPORTED_PYTHON_VERSIONS`. Releases missing from that table
+        are accepted.
+    accept : callable(str) -> bool, optional
+        Only accept installations whose path satisfies this predicate
+        (e.g., `lambda path: op.exists(op.join(path, "bin", "mwpython"))`).
+    missing_ok : bool, default=False
+        If no installation matches, return `(release, None)` instead of
+        raising, where `release` is the release to install. With
+        'latest_installed', this queries the MathWorks servers for the
+        most recent release (that supports `python_version`).
+
+    Returns
+    -------
+    release : str
+        MATLAB release (e.g. 'R2024b').
+    path : str | None
+        Root of the installation. None only if `missing_ok`.
+
+    Raises
+    ------
+    RuntimeNotFoundError
+        If no installation matches (unless `missing_ok`).
+    UnsupportedPythonError
+        If the requested release does not support `python_version`, or
+        if no installed release does (unless `missing_ok`).
+    """
+    version = str(version or "latest_installed")
+    python_version = _python_version(python_version)
+
+    if version.lower() == "latest_installed":
+        target = None
+    elif version.lower() == "latest":
+        target = guess_release("latest")
+    else:
+        target = matlab_release(version)
+
+    if target and python_version:
+        if python_supported(target, python_version) is False:
+            versions = ", ".join(supported_python_versions(target)) or "none"
+            raise UnsupportedPythonError(
+                f"MATLAB {target} does not support Python {python_version} "
+                f"(supported versions: {versions})."
+            )
+
+    found = list(iter_installations(prefix))
+    candidates = [x for x in found if target in (None, x.release)]
+    nb_matching = len(candidates)
+    if accept is not None:
+        candidates = [x for x in candidates if accept(x.path)]
+    nb_rejected = nb_matching - len(candidates)
+    if python_version:
+        compatible = [
+            x for x in candidates
+            if python_supported(x.release, python_version) is not False
+        ]
+    else:
+        compatible = candidates
+
+    if compatible:
+        # sorted() is stable, also with reverse=True: ties keep their
+        # search order, so that `prefix` wins.
+        best = sorted(compatible, key=lambda x: release_key(x.release),
+                      reverse=True)[0]
+        return best.release, best.path
+
+    if missing_ok:
+        return target or latest_release(python_version), None
+
+    # --- explain what was found --------------------------------------
+    what = target or "MATLAB Runtime"
+    if found:
+        listing = "Installations found:\n" + _describe_installations(found)
+    else:
+        listing = "No MATLAB Runtime or MATLAB installation found."
+    if nb_rejected:
+        listing += (
+            f"\n{nb_rejected} matching installation(s) were rejected "
+            f"(e.g., missing required files)."
+        )
+    if candidates and python_version:
+        raise UnsupportedPythonError(
+            f"No installed {what} supports Python {python_version}.\n"
+            f"{listing}"
+        )
+    raise RuntimeNotFoundError(
+        f"No installed {what} found.\n{listing}\n{_NOT_FOUND_HINT}"
+    )
 
 
 def iter_existing_installations(variant='latest_installed'):
     """
-    Iterate over MATLAB and MATLAB Runtime installations in common location.
+    Iterate over MATLAB and MATLAB Runtime installations.
 
-    If variant is "latest_installed", the function will return the latest
-    installed version. Otherwise, it will return the versions that
-    matches the variant.
+    Thin wrapper around `iter_installations`, kept for backward
+    compatibility.
+
+    Parameters
+    ----------
+    variant : str, default='latest_installed'
+        If 'latest_installed', yield all installations. Otherwise, only
+        yield installations of this release (e.g. 'R2024b' or '24.2').
 
     Yields
     ------
     path : str
-        Path to the installation
-    variant : str
-        Version of the installation
+        Path to the installation, most recent release first.
+    release : str
+        Release of the installation (read from its `VersionInfo.xml`).
     """
-    arch = guess_arch()
-    bases = CANDIDATE_LOCATIONS_BY_OS[arch[:3]]
-
-    if os.environ.get("MATLAB_RUNTIME_PATH", ""):
-        yield (os.environ["MATLAB_RUNTIME_PATH"], variant)
-
-    import re
-    import glob
-
-    if variant == "latest_installed":
-        pattern = re.compile(r"R\d{4}[ab]")
-    else:
-        pattern = re.compile(variant)
-
-    paths = []
-    for base in bases:
-        try:
-            for path in glob.glob(base.format(release="*")):
-                search = re.search(pattern, path)
-                if search:
-                    paths.append((base, path, search.group()))
-        except FileNotFoundError:
-            continue
-
-    def sort_paths(path_tuple):
-        return (path_tuple[2], bases[::-1].index(path_tuple[0]))
-
-    for _, path, ver in sorted(paths, reverse=True, key=sort_paths):
-        yield path, ver
+    installations = list(iter_installations())
+    if str(variant).lower() != "latest_installed":
+        target = matlab_release(variant)
+        installations = [x for x in installations if x.release == target]
+    installations.sort(key=lambda x: release_key(x.release), reverse=True)
+    for installation in installations:
+        yield installation.path, installation.release
 
 
 def guess_prefix():
     """
     Guess the MATLAB Runtime installation prefix.
 
-    If the environment variable `"MATLAB_RUNTIME_PATH"` is set, return it.
+    If the environment variable `"MATLAB_RUNTIME_PATH"` is set, return it
+    (or its parent folder if it points to a release folder, i.e. a folder
+    that contains `VersionInfo.xml`).
 
     Otherwise, the default prefix is platform-specific:
 
@@ -632,7 +1046,10 @@ def guess_prefix():
     prefix : str
     """
     if os.environ.get("MATLAB_RUNTIME_PATH", ""):
-        return os.environ["MATLAB_RUNTIME_PATH"]
+        path = os.environ["MATLAB_RUNTIME_PATH"]
+        if installation_release(path):
+            return op.dirname(op.normpath(path))
+        return path
 
     arch = guess_arch()
     if arch[:3] == "win":
@@ -650,81 +1067,44 @@ def find_runtime_in_prefix(version, prefix):
 
     Recent releases install into `<prefix>/<release>` (e.g. `R2024b`),
     older ones into `<prefix>/v<NN>` (e.g. `v97` for R2019b).
+    `prefix` may also be the release folder itself.
     Returns the path, or None if not found.
     """
     version = matlab_release(version)
+    if installation_release(prefix) == version:
+        return prefix
     path = op.join(prefix, version)
-    if op.exists(op.join(path, "VersionInfo.xml")):
+    if installation_release(path) == version:
         return path
-    if not op.isdir(prefix):
-        return None
-    for name in sorted(os.listdir(prefix)):
-        path = op.join(prefix, name)
-        if not op.exists(op.join(path, "VersionInfo.xml")):
-            continue
-        try:
-            if guess_matlab_release(path) == version:
-                return path
-        except Exception:
-            continue
+    for installation in _scan_root(prefix, "prefix"):
+        if installation.release == version:
+            return installation.path
     return None
 
 
 def find_runtime(version, prefix=None):
     """
     Find an installed MATLAB runtime with a specific version.
+
+    Thin wrapper around `resolve_runtime`, kept for backward compatibility.
+
+    Parameters
+    ----------
+    version : str
+        MATLAB release (e.g. 'R2024b') or version (e.g. '24.2'),
+        or 'latest_installed'.
+    prefix : str, optional
+        Installation prefix (or release folder) searched first.
+
+    Returns
+    -------
+    path : str | None
+        Root of the installation, or None if not found.
     """
-    version = matlab_release(version)
-    version_info = "VersionInfo.xml"
-
-    # Check under prefix
-    if prefix is None:
-        prefix = guess_prefix()
-    if op.exists(op.join(prefix, version, version_info)):
-        return op.join(prefix, version)
-
-    # Check if MATLAB_PATH is set
-    if os.environ.get("MATLAB_PATH", ""):
-        path = os.environ["MATLAB_PATH"].rstrip(op.sep)
-        if guess_matlab_release(path) == version:
-            return path
-
-    # Look for other known locations
-    arch = guess_arch()
-    if arch[:3] == "win":
-        bases = [
-            "C:\\Program Files (x86)\\MATLAB\\MATLAB Runtime\\{release}",
-            "C:\\Program Files\\MATLAB\\MATLAB Runtime\\{release}",
-            "C:\\Program Files\\MATLAB\\{release}",
-            "C:\\Program Files (x86)\\MATLAB\\{release}"
-        ]
-    elif arch[:3] == "gln":
-        bases = [
-            "/usr/local/MATLAB/MATLAB_Runtime/{release}",
-            "/usr/local/MATLAB/{release}"
-        ]
-    elif arch[:3] == "mac":
-        bases = [
-            "/Applications/MATLAB/MATLAB_Runtime/{release}",
-            "/Applications/MATLAB_{release}.app",
-            "/Applications/MATLAB_{release}",
-            "/Applications/MATLAB/{release}"
-        ]
-    for base in bases:
-        base = base.format(release=version)
-        if op.exists(op.join(base, "VersionInfo.xml")):
-            return base
-
-    # Check whether a matlab binary is on the path
-    path = shutil.which("matlab")
-    if path:
-        path = op.realpath(path)
-        path = op.realpath(op.join(op.dirname(path), ".."))
-        if guess_matlab_release(path) == version:
-            return path
-
-    # Nothing -> return
-    return None
+    try:
+        return resolve_runtime(version, prefix)[1]
+    except VersionNotFoundError:
+        return None
 
 
 # ----------------------------------------------------------------------
@@ -786,20 +1166,20 @@ def _guess_matlab_version(path, key):
 def matlab_release(version):
     """Convert MATLAB version (e.g. 24.2) to release (e.g. R2024b)."""
     if isinstance(version, (list, tuple)):
-        version = ".".join(map(str(version[:2])))
+        version = ".".join(map(str, version[:2]))
     if version[:1] == "R":
         return version
     if version in VERSION_TO_RELEASE:
         return VERSION_TO_RELEASE[version]
     year, release, *_ = version.split(".")
-    return "R20" + year + ("abcdefghijklmnopqrstuvwxy"[int(release)+1])
+    return "R20" + year + ("abcdefghijklmnopqrstuvwxy"[int(release)-1])
 
 
 def matlab_version(version):
     """Convert MATLAB release (e.g. R2024b) to version (e.g. 24.2)."""
     # 1. look for version in dict of known versions
     if isinstance(version, (list, tuple)):
-        version = ".".join(map(str(version[:2])))
+        version = ".".join(map(str, version[:2]))
     for runtime_version, matlab_version in VERSION_TO_RELEASE.items():
         if version in (runtime_version, matlab_version):
             return runtime_version
@@ -812,18 +1192,35 @@ def matlab_version(version):
 
 
 def guess_release(version, arch=None, prefix=None):
-    """Guess version (if "latest") + convert to MATLAB release (e.g. R2024b)"""
+    """
+    Guess version (if "latest") + convert to MATLAB release (e.g. R2024b).
+
+    Parameters
+    ----------
+    version : str
+        MATLAB release (e.g. 'R2024b') or version (e.g. '24.2').
+        If 'latest_installed', the most recent installed release
+        (see `resolve_runtime`).
+        If 'latest', the most recent release available online
+        (queries the MathWorks servers).
+    arch : str, optional
+        Target architecture (used with 'latest').
+    prefix : str, optional
+        Installation prefix searched first (used with 'latest_installed').
+
+    Returns
+    -------
+    release : str
+
+    Raises
+    ------
+    RuntimeNotFoundError
+        If 'latest_installed' and no runtime is installed.
+    """
     arch = arch or guess_arch()
 
     if version.lower() == "latest_installed":
-        if prefix is None:
-            prefix = guess_prefix()
-        if op.exists(prefix):
-            license = "matlabruntime_license_agreement.pdf"
-            for name in sorted(os.listdir(prefix), reverse=True):
-                if op.exists(op.join(prefix, name, license)):
-                    return matlab_release(name)
-        return guess_release("latest", arch)
+        return resolve_runtime("latest_installed", prefix)[0]
 
     elif version.lower() == "latest":
 
