@@ -3,14 +3,21 @@ import os
 import os.path as op
 import subprocess
 import sys
+from . import impl
 from .impl import install, uninstall
 from .utils import (
+  askuser,
   guess_arch,
   guess_prefix,
+  matlab_release,
   mwpython_version_args,
+  release_key,
   resolve_runtime,
+  RuntimeNotFoundError,
   VersionNotFoundError,
+  _env_flag,
 )
+from . import utils as _utils
 
 
 # --- install_matlab_runtime -------------------------------------------
@@ -286,6 +293,93 @@ def _mpython_command(args, variant="latest_installed", verbose=False,
     return [mwpython_app, *args, *mwpython_version_args(python_version)], ENV
 
 
+def _guess_missing_release(variant, python_version):
+    """
+    Release to suggest installing, without querying MathWorks.
+
+    The explicit release if `variant` is one, else the most recent
+    release known to support `python_version`. None if unknown.
+    """
+    if str(variant).lower() not in ("latest_installed", "latest"):
+        try:
+            return matlab_release(variant)
+        except Exception:
+            return None
+    releases = [
+        release
+        for release, versions in _utils.SUPPORTED_PYTHON_VERSIONS.items()
+        if python_version in versions
+    ]
+    if not releases:
+        return None
+    return sorted(releases, key=release_key, reverse=True)[0]
+
+
+def _install_missing_runtime(error, variant):
+    """
+    Offer to install the runtime that `mpython` could not find.
+
+    Prompts only if stdin is interactive and `$MATLAB_RUNTIME_OFFLINE`
+    is not set. Otherwise (or if the user declines, or the release to
+    install cannot be determined, or the installation fails), prints
+    `error` with the command that installs the runtime.
+
+    Parameters
+    ----------
+    error : RuntimeNotFoundError
+        Error raised by the runtime discovery.
+    variant : str
+        Requested release (or 'latest_installed').
+
+    Returns
+    -------
+    bool
+        True if a runtime was installed.
+    """
+    python_version = "{}.{}".format(*sys.version_info[:2])
+
+    try:
+        interactive = sys.stdin is not None and sys.stdin.isatty()
+    except Exception:
+        interactive = False
+    release = None
+    if interactive and not _env_flag("MATLAB_RUNTIME_OFFLINE"):
+        try:
+            # Same resolution as `init(install_if_missing=True)`; may
+            # query the MathWorks servers for 'latest_installed'.
+            release, _ = resolve_runtime(
+                variant, python_version=python_version, missing_ok=True
+            )
+        except Exception:
+            release = None
+    if release:
+        try:
+            yes = askuser(
+                f"No MATLAB Runtime {release} found. Install it now?",
+                "yes",
+            )
+        except (EOFError, KeyboardInterrupt):
+            print()
+            yes = False
+        if yes:
+            try:
+                impl.install(release)
+            except (Exception, KeyboardInterrupt) as e:
+                print(f"Failed to install MATLAB Runtime {release}: {e}",
+                      file=sys.stderr)
+                return False
+            return True
+
+    hint = release or _guess_missing_release(variant, python_version)
+    message = str(error)
+    if hint:
+        message += (
+            f"\nTo install it, run: install_matlab_runtime --version {hint}"
+        )
+    print(message, file=sys.stderr)
+    return False
+
+
 def mpython(args=None):
     """
     Python wrapper that replaces MathWorks's `mwpython` (macOS).
@@ -303,7 +397,14 @@ def mpython(args=None):
     -------
     int
         Exit code: that of the python process, 10 if not on macOS,
-        1 for invalid options or if no suitable runtime is found.
+        1 for invalid options or if no suitable runtime is found
+        (and none was installed).
+
+    Notes
+    -----
+    If no matching runtime is installed and stdin is interactive,
+    `mpython` offers to install it (unless `$MATLAB_RUNTIME_OFFLINE`
+    is set); otherwise, it prints the command that installs it.
     """
     if args is None:
         args = sys.argv[1:]
@@ -349,7 +450,14 @@ def mpython(args=None):
         what = "Executing: "
 
     try:
-        argv, env = _mpython_command(args, variant, verbose)
+        try:
+            argv, env = _mpython_command(args, variant, verbose)
+        except RuntimeNotFoundError as e:
+            # Offer to install the missing runtime (CLI only: callers of
+            # `_mpython_command` handle installation themselves).
+            if not _install_missing_runtime(e, variant):
+                return 1
+            argv, env = _mpython_command(args, variant, verbose)
     except _MPythonError as e:
         print(e)
         return e.returncode

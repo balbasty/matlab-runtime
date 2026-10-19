@@ -530,6 +530,12 @@ importing `scipy.sparse`.
 Instead, we provide our own wrapper, `mpython`, which is automatically
 installed with this package. It does solve the conda environement issue.
 
+If the requested runtime (`-variant`, or the most recent release that
+supports the running python) is not installed, `mpython` offers to
+install it when run from an interactive terminal (unless
+`MATLAB_RUNTIME_OFFLINE=1`); otherwise it prints the
+`install_matlab_runtime --version ...` command to run.
+
 That said, the `matplotlib` package still cannot be used with this wrapper
 (nor can it be used with MATLAB's `mwpython`). To use both, see
 [`matlab_runtime.remote`](#out-of-process-runtime-matlab_runtimeremote).
