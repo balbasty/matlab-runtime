@@ -38,6 +38,9 @@ def sdk(tmp_path, monkeypatch):
     monkeypatch.setattr(sys, "path", list(sys.path))
     monkeypatch.setenv("PATH", os.environ.get("PATH", ""))
     monkeypatch.setattr(impl, "_INITIALIZED", {"SDK": False, "RUNTIME": False})
+    # In-process, also on macOS outside mwpython (see test_mode.py)
+    monkeypatch.setattr(impl, "_MODE", {"mode": None})
+    monkeypatch.setenv(utils.MODE_ENV, "inprocess")
     monkeypatch.setattr(impl, "_DEPLOYED_MODULES", {})
 
     state = dict(imports=[], prefix=prefix, version="24.2.0")

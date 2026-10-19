@@ -22,6 +22,7 @@ This is a small package that simply allows to
 * [Runtime selection](#runtime-selection)
   * [Environment variables](#environment-variables)
 * [Out-of-process runtime (`matlab_runtime.remote`)](#out-of-process-runtime-matlab_runtimeremote)
+  * [Runtime mode](#runtime-mode)
 * [Troubleshooting](#troubleshooting)
   * [MacOS](#macos)
   * [Windows](#windows)
@@ -137,6 +138,11 @@ that the package was compiled with (read from its CTF archive). It raises
 an error if another release has already been initialized, since a
 compiled package only runs with the MATLAB Runtime of its own release.
 
+On macOS, unless python runs under `mwpython`/`mpython`, the same code
+runs the MATLAB Runtime in a worker process (see
+[Runtime mode](#runtime-mode)): functions then return numpy arrays,
+numbers, strings, lists and dicts instead of `matlab.*` objects.
+
 Note that `my_matlab_project` only needs to contain an (eventually empty)
 `__init__.py` and the compiled CTF file with the same name as the module.
 None of the other files spit out by the MATLAB compiler are requried.
@@ -251,6 +257,7 @@ def init(
     install_if_missing=False,
     prefix=None,
     auto_answer=False,
+    mode=None,
 ):
     """
     Set current environment so that the MATLAB Python SDK is properly
@@ -277,11 +284,18 @@ def init(
     auto_answer : bool
         Default answer to all questions.
         **This entails accepting the MATLAB Runtime license agreement.**
+    mode : {"inprocess", "remote", "auto"}, optional
+        Where the MATLAB SDK runs (see "Runtime mode"). Default: the mode
+        already used in this process, else `$MATLAB_RUNTIME_MODE`,
+        else "auto" ("remote" on macOS unless running under mwpython,
+        "inprocess" elsewhere).
 
     Raises
     ------
     ValueError
         If another release of the SDK has already been initialized.
+    RuntimeError
+        If the runtime is already used in another mode in this process.
     RuntimeNotFoundError
         If no matching runtime is installed (and not `install_if_missing`).
     UnsupportedPythonError
@@ -290,7 +304,7 @@ def init(
     """
     ...
 
-def import_deployed(*packages, option_list=tuple()):
+def import_deployed(*packages, option_list=tuple(), mode=None):
     """
     Initialize compiled MATLAB packages so that they can be used from python.
 
@@ -304,11 +318,13 @@ def import_deployed(*packages, option_list=tuple()):
         Python package that contains a compiled MATLAB package (a ctf file).
     option_list : list[str]
         Options passed to MATLAB, if the runtime is not initialized yet.
+    mode : {"inprocess", "remote", "auto"}, optional
+        Where the MATLAB SDK runs (see `init` and "Runtime mode").
 
     Returns
     -------
-    *modules : module
-        Imported MATLAB modules.
+    *modules : module | remote.RemoteHandle
+        Imported MATLAB modules (handles to them in "remote" mode).
     """
     ...
 ```
@@ -361,6 +377,7 @@ The list of installations can be obtained with
 | Variable | Meaning |
 |----------|---------|
 | `MATLAB_RUNTIME_PATH` | Runtime location searched first: a prefix (folder that contains release folders) or a single release folder. It is also the default installation prefix (its parent folder, if it is a release folder). |
+| `MATLAB_RUNTIME_MODE` | Default runtime mode: `inprocess`, `remote` or `auto` (see [Runtime mode](#runtime-mode)). |
 | `MATLAB_PATH` | Additional location searched for a MATLAB or MATLAB Runtime installation (release folder or prefix). |
 | `MATLAB_RUNTIME_OFFLINE` | If set to `1`, do not fetch the up-to-date release registry from GitHub on import; only use the registry bundled with the package. |
 | `MATLAB_RUNTIME_INFO_TIMEOUT` | Maximum time (in seconds, default `3`) spent fetching the release registry on import. `0` is equivalent to `MATLAB_RUNTIME_OFFLINE=1`. |
@@ -460,6 +477,36 @@ Limitations:
   release, shared memory under `mwpython`, forwarding of output printed
   by MATLAB itself, and startup time.
 
+### Runtime mode
+
+`init`, `import_deployed` and `init_runtime` take a `mode` argument:
+
+* `"inprocess"`: the MATLAB SDK is loaded in the current process (the
+  historical behaviour).
+* `"remote"`: `init` calls `remote.init` (same arguments) and
+  `import_deployed` returns `remote.import_deployed` handles: the SDK
+  runs in a worker process. `init_runtime` initializes the runtime in
+  the worker (starting it if needed), and `terminate_runtime` stops the
+  worker (handles become invalid; the next `init`/`import_deployed`
+  starts a new one).
+* `"auto"` (default): `"remote"` on macOS, unless python already runs
+  under `mwpython` (e.g. through `mpython`/`mwpython2`), and
+  `"inprocess"` on Linux and Windows.
+
+The mode is chosen from the `mode` argument, else the environment
+variable `MATLAB_RUNTIME_MODE`, else `"auto"`, by the first of these
+calls, and then fixed for the process: later calls without `mode` (or
+with `"auto"`) use it, and asking for the other mode raises a
+`RuntimeError` (as does `"remote"` once the SDK has been loaded
+in-process). The worker always runs in-process.
+
+**In remote mode, values come back converted** (see above): numpy arrays
+instead of `matlab.double` & co, lists and dicts for cells and structs,
+and `remote.RemoteHandle` for MATLAB objects and function handles (use
+`remote.is_matlab_object(x)` rather than `isinstance(x, matlab.object)`).
+Code that relies on `matlab.*` types should use `mode="inprocess"`
+(under `mpython` on macOS).
+
 ## Troubleshooting
 
 ### MacOS
@@ -468,6 +515,12 @@ Limitations:
 
 The MATLAB SDK cannot be used with the normal python interpreter on MacOS.
 Instead, the MATLAB runtime ships with its own interpreter called `mwpython`.
+
+By default, `init` and `import_deployed` therefore run the MATLAB SDK in
+a worker process started through `mwpython` when they are called from
+the normal interpreter (see [Runtime mode](#runtime-mode)), so that
+`mpython` is not needed. The rest of this section applies to the
+in-process mode.
 
 However, `mwpython` does not interface correctly with conda environments
 (it overrides environement variables that cause compiled libraries

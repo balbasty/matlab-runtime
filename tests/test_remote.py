@@ -873,3 +873,66 @@ def test_lazy_import():
         python_argv("-c", code), capture_output=True, text=True, cwd=ROOT
     )
     assert p.stdout.split() == ["False", "matlab_runtime.remote"]
+
+
+# ----------------------------------------------------------------------
+#   MPYTHON SUPPORT
+# ----------------------------------------------------------------------
+
+
+def test_matlab_object_handles(pkg):
+    # A MATLAB function handle stays in the worker...
+    handle = pkg.make_handle(10)
+    assert isinstance(handle, remote.RemoteHandle)
+    assert remote.is_matlab_object(handle)
+    assert not remote.is_matlab_object(pkg)
+    assert not remote.is_matlab_object(1.0)
+    assert not remote.is_matlab_object(np.ones(3))
+    # ... and is the original object when passed back
+    assert pkg.is_handle(handle)
+    assert pkg.mpython_endpoint(handle, 5.0) == 15.0
+    assert handle(1.0) == 11.0
+
+
+def test_is_matlab_object_inprocess(monkeypatch):
+    # In-process `matlab.object` instances (when the SDK is loaded)
+    monkeypatch.delitem(sys.modules, "matlab", raising=False)
+    assert not remote.is_matlab_object(object())
+    from ._fake_sdk import matlab
+    monkeypatch.setitem(sys.modules, "matlab", matlab)
+    assert remote.is_matlab_object(matlab.object(abs))
+    assert not remote.is_matlab_object(matlab.double([1.0]))
+    assert not remote.is_matlab_object(object())
+
+
+def assert_cell(x, size, data0):
+    assert type(x) is dict and set(x) == {"type__", "size__", "data__"}
+    assert x["type__"] == "cell"
+    assert type(x["size__"]) is np.ndarray
+    assert x["size__"].dtype == size.dtype
+    assert (x["size__"] == size).all() and x["size__"].shape == size.shape
+    assert type(x["data__"]) is list and len(x["data__"]) == 2
+    assert (x["data__"][0] == data0).all()
+    assert x["data__"][1] == "a"
+
+
+def test_tagged_dicts_round_trip(pkg):
+    # mpython's tagged dicts (cells, structs, ...) are plain dicts of
+    # numpy arrays: they cross the wire both ways unchanged.
+    size = np.array([[1, 2]], dtype=np.int64)
+    data0 = np.array([[1.0, 2.0]])
+    cell = {"type__": "cell", "size__": size, "data__": [data0, "a"]}
+    out = pkg.ident(cell)
+    assert_cell(out, size, data0)
+    assert_cell(cell, size, data0)  # not modified
+    # The worker gets a dict, whose arrays are matlab arrays
+    assert pkg.mpython_endpoint("f", cell)["types"] == ["builtins.dict"]
+    assert pkg.types(cell["size__"]) == "matlab.int64"
+    assert pkg.types(cell["data__"][0]) == "matlab.double"
+    # Built in the worker (with matlab arrays)
+    assert_cell(pkg.cell(), np.array([[1.0, 2.0]]), data0)
+    # Nested
+    out = pkg.ident({"type__": "struct", "x": [cell, {"y": cell}]})
+    assert out["type__"] == "struct"
+    assert_cell(out["x"][0], size, data0)
+    assert_cell(out["x"][1]["y"], size, data0)
