@@ -31,6 +31,10 @@ from .utils import (
     macos_version,
     matlab_release,
     matlab_version,
+    python_supported,
+    resolve_runtime,
+    ctf_matlab_release,
+    deployed_ctf,
     guess_pymatlab_version,
     url_download,
     ctf_required_products,
@@ -331,7 +335,7 @@ def uninstall(version=None, prefix=None, auto_answer=False):
     if version.lower() == "all":
         rmdir = prefix
     else:
-        rmdir = op.join(rmdir, version)
+        rmdir = op.join(prefix, version)
 
     # --- uninstall  ---------------------------------------------------
     question = f"Remove directory {rmdir} and its content?"
@@ -373,57 +377,78 @@ def init(
 
     Parameters
     ----------
-    version : [list of] str, default="latest_installed"
+    version : str, default="latest_installed"
         MATLAB version, such as 'latest' or 'R2022b' or '9.13'.
-        If 'latest_installed', use the most recent currently installed
-        version. If no version is installed, equivalent to 'latest'.
+        If 'latest_installed', use the most recent installed release
+        that supports the running Python (see `utils.resolve_runtime`).
+        If none is installed, raise an error, unless `install_if_missing`,
+        in which case the most recent release that supports the running
+        Python is installed.
     install_if_missing : bool
         If target version is missing, run installer.
     prefix : str, optional
-        Install location. Default:
+        Location searched first (an installation prefix or a release
+        folder), and install location. Default:
+        * `$MATLAB_RUNTIME_PATH`, if set; else
         * Windows:  C:\\Program Files\\MATLAB\\MATLAB Runtime\\
         * Linux:    /usr/local/MATLAB/MATLAB_Runtime
         * MacOS:    /Applications/MATLAB/MATLAB_Runtime
-    default_answer : bool
+    auto_answer : bool
         Default answer to all questions.
         **This entails accepting the MATLAB Runtime license agreement.**
-    """
-    if _INITIALIZED["SDK"]:
-        raise ValueError("MATLAB SDK already initialized")
 
+    Raises
+    ------
+    ValueError
+        If another release of the SDK has already been initialized.
+    RuntimeNotFoundError
+        If no matching runtime is installed (and not `install_if_missing`).
+    UnsupportedPythonError
+        If the requested release does not support the running Python
+        (according to `utils.SUPPORTED_PYTHON_VERSIONS`).
+
+    Warns
+    -----
+    UserWarning
+        If the release is not listed in `utils.SUPPORTED_PYTHON_VERSIONS`,
+        so that compatibility with the running Python cannot be checked.
+    """
     # --- prepare  -----------------------------------------------------
     arch = guess_arch()
     version = version or "latest_installed"
-    if prefix is None:
-        prefix = guess_prefix()
-
-    # --- find version  ------------------------------------------------
-    version = guess_release(version, arch)
-    path = find_runtime(version, prefix)
 
     # --- if already initialized: stop  --------------------------------
-    sdk_version = _INITIALIZED["SDK"]
-    if sdk_version:
-        if sdk_version != version:
+    sdk_release = _INITIALIZED["SDK"]
+    if sdk_release:
+        if str(version).lower() == "latest_installed":
+            return
+        release = guess_release(version, arch)
+        if sdk_release != release:
             raise ValueError(
-                f"Another version ({sdk_version}) of the MATLAB SDK has "
+                f"Another version ({sdk_release}) of the MATLAB SDK has "
                 f"already been initialized, and differs from the target "
-                f"version ({version}). It is currently not possible to  "
+                f"version ({release}). It is currently not possible to "
                 f"run multiple versions of MATLAB at the same time."
             )
-        else:
-            return
+        return
+
+    # --- find version  ------------------------------------------------
+    python_version = "{}.{}".format(*sys.version_info[:2])
+    release, path = resolve_runtime(
+        version, prefix, python_version=python_version,
+        missing_ok=install_if_missing,
+    )
 
     # --- install version  ---------------------------------------------
     if not path:
-        if install_if_missing:
-            install(version, prefix, auto_answer)
-            path = op.join(prefix, version)
-        else:
-            raise FileNotFoundError(
-                "Version not found in installed runtimes:",
-                op.join(prefix, version)
-            )
+        install(release, prefix, auto_answer)
+        release, path = resolve_runtime(release, prefix)
+
+    if python_supported(release, python_version) is None:
+        warnings.warn(
+            f"Python versions supported by MATLAB {release} are unknown: "
+            f"cannot check that Python {python_version} is supported."
+        )
 
     # --- prepare paths  -----------------------------------------------
     ext = op.join(path, 'extern', 'bin', arch)
@@ -453,7 +478,7 @@ def init(
     except ValueError:
         current_version = None
 
-    target_version = matlab_version(version)
+    target_version = matlab_version(release)
     target_version = tuple(map(int, target_version.split(".")[:2]))
 
     if current_version is None:
@@ -464,7 +489,37 @@ def init(
             f'runtime version of previously loaded package ({current_version})'
         )
 
-    _INITIALIZED["SDK"] = version
+    _INITIALIZED["SDK"] = release
+
+
+def _deployed_release(packages):
+    """
+    Release that compiled packages target, read from their CTF archives.
+
+    Returns None if it cannot be determined. Raises ValueError if the
+    packages were compiled with different releases.
+    """
+    releases = {}
+    for package in packages:
+        ctf = deployed_ctf(package)
+        if not ctf:
+            continue
+        try:
+            release = ctf_matlab_release(ctf)
+        except Exception:
+            continue
+        name = package if isinstance(package, str) else package.__name__
+        releases.setdefault(release, []).append(name)
+    if len(releases) > 1:
+        listing = "; ".join(
+            f"{release}: {', '.join(names)}"
+            for release, names in releases.items()
+        )
+        raise ValueError(
+            f"Packages were compiled with different MATLAB releases "
+            f"({listing}) and cannot be used in the same process."
+        )
+    return next(iter(releases), None)
 
 
 class _PathInitializer:
@@ -478,16 +533,41 @@ def import_deployed(*packages, option_list=tuple()):
     """
     Initialize compiled MATLAB packages so that they can be used from python.
 
+    If the MATLAB SDK is not initialized yet, it is initialized with the
+    release that the packages were compiled with (read from their CTF
+    archive), or else with the most recent installed release.
+
     Parameters
     ----------
     *packages : module | str
         Python package that contains a compiled MATLAB package (a ctf file).
+    option_list : list[str]
+        Options passed to MATLAB, if the runtime is not initialized yet.
 
     Returns
     -------
     *modules : module
         Imported MATLAB modules.
+
+    Raises
+    ------
+    ValueError
+        If the packages were compiled with a release that differs from
+        the one already initialized (or from each other).
     """
+    release = _deployed_release(packages)
+    sdk_release = _INITIALIZED["SDK"]
+    if release and sdk_release and release != sdk_release:
+        raise ValueError(
+            f"The MATLAB SDK was initialized with MATLAB {sdk_release}, but "
+            f"the deployed package(s) were compiled with MATLAB {release}. "
+            f"A compiled package can only run with the MATLAB Runtime of "
+            f"the release that compiled it. Call init(\"{release}\") "
+            f"before anything else initializes the SDK."
+        )
+    if not sdk_release:
+        init(release or "latest_installed")
+
     if not _INITIALIZED["RUNTIME"]:
         init_runtime(option_list)
 

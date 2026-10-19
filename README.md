@@ -19,6 +19,8 @@ This is a small package that simply allows to
 * [Python API](#python-api)
   * [Examples](#examples)
   * [API](#api)
+* [Runtime selection](#runtime-selection)
+  * [Environment variables](#environment-variables)
 * [Troubleshooting](#troubleshooting)
   * [MacOS](#macos)
   * [Windows](#windows)
@@ -123,11 +125,16 @@ Import a compiled MATLAB package:
 import my_matlab_project
 from matlab_runtime import init, import_deployed
 
-init("R2024b")  # Same version used when compiling the package
+init("R2024b")  # Optional: same version used when compiling the package
 
 my_matlab_project = import_deployed(my_matlab_project)
 my_matlab_project.my_function()
 ```
+
+If `init` has not been called, `import_deployed` initializes the release
+that the package was compiled with (read from its CTF archive). It raises
+an error if another release has already been initialized, since a
+compiled package only runs with the MATLAB Runtime of its own release.
 
 Note that `my_matlab_project` only needs to contain an (eventually empty)
 `__init__.py` and the compiled CTF file with the same name as the module.
@@ -146,7 +153,9 @@ def guess_prefix():
     """
     Guess the MATLAB Runtime installation prefix.
 
-    If the environment variable `"MATLAB_RUNTIME_PATH"` is set, return it.
+    If the environment variable `"MATLAB_RUNTIME_PATH"` is set, return it
+    (or its parent folder if it points to a release folder, i.e. a folder
+    that contains `VersionInfo.xml`).
 
     Otherwise, the default prefix is platform-specific:
 
@@ -250,29 +259,50 @@ def init(
     ----------
     version : str, default="latest_installed"
         MATLAB version, such as 'latest' or 'R2022b' or '9.13'.
-        If 'latest_installed', use the most recent currently installed
-        version. If no version is installed, equivalent to 'latest'.
+        If 'latest_installed', use the most recent installed release
+        that supports the running Python (see `utils.resolve_runtime`).
+        If none is installed, raise an error, unless `install_if_missing`,
+        in which case the most recent release that supports the running
+        Python is installed.
     install_if_missing : bool
         If target version is missing, run installer.
     prefix : str, optional
-        Install location. Default:
+        Location searched first (an installation prefix or a release
+        folder), and install location. Default:
+        * `$MATLAB_RUNTIME_PATH`, if set; else
         * Windows:  C:\\Program Files\\MATLAB\\MATLAB Runtime\\
         * Linux:    /usr/local/MATLAB/MATLAB_Runtime
         * MacOS:    /Applications/MATLAB/MATLAB_Runtime
-    default_answer : bool
+    auto_answer : bool
         Default answer to all questions.
         **This entails accepting the MATLAB Runtime license agreement.**
+
+    Raises
+    ------
+    ValueError
+        If another release of the SDK has already been initialized.
+    RuntimeNotFoundError
+        If no matching runtime is installed (and not `install_if_missing`).
+    UnsupportedPythonError
+        If the requested release does not support the running Python
+        (according to `utils.SUPPORTED_PYTHON_VERSIONS`).
     """
     ...
 
-def import_deployed(*packages):
+def import_deployed(*packages, option_list=tuple()):
     """
     Initialize compiled MATLAB packages so that they can be used from python.
+
+    If the MATLAB SDK is not initialized yet, it is initialized with the
+    release that the packages were compiled with (read from their CTF
+    archive), or else with the most recent installed release.
 
     Parameters
     ----------
     *packages : module | str
         Python package that contains a compiled MATLAB package (a ctf file).
+    option_list : list[str]
+        Options passed to MATLAB, if the runtime is not initialized yet.
 
     Returns
     -------
@@ -281,6 +311,63 @@ def import_deployed(*packages):
     """
     ...
 ```
+
+## Runtime selection
+
+`init()`, `import_deployed()` and `mpython` all choose a runtime the same
+way (`matlab_runtime.utils.resolve_runtime`). The following locations are
+searched, in order:
+
+1. the `prefix` argument if provided, else `$MATLAB_RUNTIME_PATH` if set,
+   else the default prefix (see `guess_prefix()`);
+2. `$MATLAB_PATH`, if set;
+3. standard locations of the MATLAB Runtime **and of full MATLAB
+   installations**, e.g. `/usr/local/MATLAB/MATLAB_Runtime/*`,
+   `/usr/local/MATLAB/*`, `/Applications/MATLAB_*.app`,
+   `C:\Program Files\MATLAB\*`;
+4. the installation that contains the `matlab` executable found on the
+   `PATH`.
+
+Each of these locations may be either a **prefix** (a folder that contains
+release folders, such as `R2024b` or the legacy `v97`) or a **release
+folder** (a folder that contains `VersionInfo.xml`). The release of each
+installation is always read from its `VersionInfo.xml`, never guessed from
+folder names.
+
+* With an explicit version (e.g. `init("R2024b")` or `mpython -variant R2024b`),
+  the first installation of that release is used.
+* With `"latest_installed"` (the default), the most recent installed
+  release is used. `init()` and `mpython` only consider releases that
+  support the running Python (according to
+  `utils.SUPPORTED_PYTHON_VERSIONS`; releases missing from that table
+  are accepted, with a warning in `init()`). On ties, the location found
+  first (_e.g._, `prefix`) wins. If `prefix` (or `$MATLAB_RUNTIME_PATH`)
+  is a release folder, that installation is used, even if a more recent
+  release is installed elsewhere.
+* `import_deployed()` (without a prior `init()`) uses the release the
+  package was compiled with.
+* If nothing matches, a `RuntimeNotFoundError` (or `UnsupportedPythonError`)
+  is raised, listing the installations that were found and the Python
+  versions they support. Nothing is downloaded unless
+  `install_if_missing=True`, in which case the requested release (or the
+  most recent release that supports the running Python) is installed.
+
+The list of installations can be obtained with
+`matlab_runtime.utils.iter_installations()`.
+
+### Environment variables
+
+| Variable | Meaning |
+|----------|---------|
+| `MATLAB_RUNTIME_PATH` | Runtime location searched first: a prefix (folder that contains release folders) or a single release folder. It is also the default installation prefix (its parent folder, if it is a release folder). |
+| `MATLAB_PATH` | Additional location searched for a MATLAB or MATLAB Runtime installation (release folder or prefix). |
+| `MATLAB_RUNTIME_OFFLINE` | If set to `1`, do not fetch the up-to-date release registry from GitHub on import; only use the registry bundled with the package. |
+| `MATLAB_RUNTIME_INFO_TIMEOUT` | Maximum time (in seconds, default `3`) spent fetching the release registry on import. `0` is equivalent to `MATLAB_RUNTIME_OFFLINE=1`. |
+
+The release registry (`info.json`: supported Python versions, update
+numbers, ...) bundled with the package is updated, entry by entry, with
+the latest registry published on GitHub. If it cannot be fetched in time,
+the bundled registry is silently used.
 
 ## Troubleshooting
 
