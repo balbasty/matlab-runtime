@@ -420,7 +420,12 @@ remote.shutdown()  # Optional: also done at exit
 * `start_timeout`: maximum time (in seconds) given to the worker to start;
 * `shm_threshold`: arrays of at least that many bytes are exchanged through
   shared memory (default: `MATLAB_RUNTIME_SHM_THRESHOLD` or 1 MiB;
-  0 disables it).
+  0 or a negative value disables it). On Linux, shared memory lives in
+  `/dev/shm`, which is half of the RAM on a normal machine but only
+  64 MB by default in Docker/Podman (use `--shm-size=...` or
+  `--ipc=host`) and Kubernetes (mount an `emptyDir` with
+  `medium: Memory` at `/dev/shm`). When it is short of space, arrays
+  are sent inline instead (slower, but it works).
 
 `remote.import_deployed` starts the worker (with default options) if
 `remote.init` has not been called, with the release the package was
