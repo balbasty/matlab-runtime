@@ -377,7 +377,7 @@ def test_find_mwpython_runtime_picks_newest_supported(mac, monkeypatch):
     fake_mwpython(mac["prefix"] / "R2026b", "R2026b")
     path = fake_mwpython(mac["prefix"] / "R2024b", "R2024b")
     fake_mwpython(mac["prefix"] / "R2023b", "R2023b")
-    assert cli.find_mwpython_runtime() == ("R2024b", path)
+    assert cli._find_mwpython_runtime() == ("R2024b", path)
 
     assert cli.mpython(["-c", "print(1)"]) == 0
     (call,), = [mac["calls"]]

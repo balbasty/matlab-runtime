@@ -104,7 +104,7 @@ def _has_mwpython(path):
     return op.exists(op.join(path, "bin", "mwpython"))
 
 
-def find_mwpython_runtime(variant="latest_installed", python_version=None):
+def _find_mwpython_runtime(variant="latest_installed", python_version=None):
     """
     Find the MATLAB Runtime whose `mwpython` should wrap python (macOS).
 
@@ -196,7 +196,7 @@ def mpython(args=None):
     python_version = f"{sys.version_info.major}.{sys.version_info.minor}"
 
     try:
-        variant, mcrroot = find_mwpython_runtime(variant, python_version)
+        variant, mcrroot = _find_mwpython_runtime(variant, python_version)
     except VersionNotFoundError as e:
         print(e, file=sys.stderr)
         return 1
