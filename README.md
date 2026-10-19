@@ -332,6 +332,65 @@ mpython -m ipykernel install --user --name {kernel_name}
 
 You may need to install `ipykernel` beforehand.
 
+#### Experimental: `mpython-native` (diagnostics only)
+
+> **EXPERIMENTAL, macOS only, meant for diagnostics.** This launcher has
+> not been validated against a real MATLAB Runtime yet, and it does
+> **not** fix Jupyter or `matplotlib`: as with `mwpython`, your code runs
+> off the main thread. The recommended way of using MATLAB packages from
+> a regular interpreter (including Jupyter) is `matlab_runtime.remote`
+> (see [PR #20](https://github.com/balbasty/matlab-runtime/pull/20)).
+> `mpython` remains the supported launcher.
+
+`mwpython` exists because the runtime (its JVM / AppKit integration) needs
+the process main thread to run a CoreFoundation run loop. It runs the run
+loop on the main thread and Python on a secondary thread, like the C SDK
+function `mclRunMain`. `mpython-native` (module `matlab_runtime.native`)
+does the same from your *own* interpreter: it sets
+`DYLD_FALLBACK_LIBRARY_PATH` (re-executing the interpreter once so that
+dyld sees it), loads `libmwmclmcrrt.dylib` with `ctypes`, and calls
+`mclRunMain`, which runs your script on a worker thread:
+
+```shell
+mpython-native -verbose myscript.py arg1 arg2
+mpython-native -nojvm -m mymod            # or: -mlstartup -nojvm,-nodisplay
+mpython-native -bypass-guard myscript.py  # opt-in, see below
+```
+
+* `-mlstartup`/`-nojvm` are forwarded to `init_runtime` through the
+  `MATLAB_RUNTIME_NATIVE_STARTUP_OPTIONS` environment variable.
+* `-diagnose-guard` prints the "must run under mwpython" checks found in
+  the MathWorks Python SDK; `-bypass-guard` neutralizes them *in memory
+  only* (only `raise`/`sys.exit` statements whose message mentions
+  mwpython; each replacement is logged; files on disk are never
+  modified).
+* The `MATLAB_RUNTIME_NATIVE_*` environment variables are only honoured
+  while `mpython-native` is running in the current process: in a plain
+  interpreter (including child processes that inherit them) they are
+  ignored, and `matlab_runtime` behaves as usual. To try the guard bypass
+  from a plain interpreter, call
+  `matlab_runtime.native.install_guard_bypass()` before
+  `matlab_runtime.init()`.
+* `-no-reexec`, `-no-runloop` and `-hard-exit` help isolating where a
+  failure or hang happens. Run `mpython-native -help` for all options.
+* Limitations: your code runs on a non-main thread (`signal.signal` fails,
+  GUI backends will not work); Ctrl-C is forwarded on a best-effort basis
+  (a second Ctrl-C force-quits); interpreters under SIP-protected paths
+  (e.g. `/usr/bin/python3`) do not receive `DYLD_*` variables.
+
+To help us validate it, run the diagnostic script (stdlib only) from a
+clone of this repository on a Mac with a runtime installed (R2024b for the
+bundled test package), and share the report it writes
+(`native_diagnose_report.txt`):
+
+```shell
+python scripts/native_diagnose.py
+```
+
+It locates the runtime, prints the SDK's mwpython guard, and runs each
+approach (plain python with `-nojvm`, with/without guard bypass, and
+`mpython-native`) in a separate subprocess with a timeout.
+
 ### Windows
 
 #### `DeclarativeService.dll not found`
