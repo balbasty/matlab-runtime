@@ -114,7 +114,10 @@ def test_jupyter_with_matplotlib(kernel):
         plt.savefig(io.BytesIO(), format="png")
         print("WORKER", remote._SESSION.proc.pid)
         pkg.echo_streams()
-    """, wait_for="printed by worker")
+    """, timeout=300, wait_for="printed by worker")
+    # First matplotlib import (font cache) + worker start can be slow on
+    # macOS Intel runners
+    assert status == "idle", f"cell did not finish: {out!r} {err!r}"
     assert ename is None, err
     assert "RESULT success 3 3.0" in out
     assert "printed by worker" in out
