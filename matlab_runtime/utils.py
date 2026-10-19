@@ -57,6 +57,64 @@ class UnsupportedPythonError(VersionNotFoundError):
 
 
 # ----------------------------------------------------------------------
+#   PYTHON INTERPRETER
+# ----------------------------------------------------------------------
+
+
+def mwpython_version_args(version=None):
+    """
+    Trailing arguments required by MathWorks' `mwpython` binary.
+
+    Parameters
+    ----------
+    version : str, optional
+        Python version "X.Y". Default: the current interpreter's.
+
+    Returns
+    -------
+    args : list[str]
+        `["-mwpythonver", "X.Y"]`
+    """
+    if version is None:
+        version = f"{sys.version_info.major}.{sys.version_info.minor}"
+    return ["-mwpythonver", version]
+
+
+def running_under_mwpython(executable=None):
+    """
+    Whether `executable` (default: `sys.executable`) is MathWorks'
+    `mwpython` binary (e.g., when running under `mpython`/`mwpython`).
+    """
+    executable = sys.executable if executable is None else executable
+    if not executable:
+        return False
+    path = executable.replace("\\", "/")
+    return (
+        op.basename(path).lower().startswith("mwpython")
+        or ".app/Contents/MacOS/mwpython" in path
+    )
+
+
+def python_argv(*args):
+    """
+    Command that runs the current interpreter with arguments `args`.
+
+    MathWorks' `mwpython` binary refuses to start without a trailing
+    `-mwpythonver X.Y` argument, which is appended when the current
+    interpreter is `mwpython`.
+
+    Returns
+    -------
+    argv : list[str]
+        `[sys.executable, *args]` (+ `["-mwpythonver", "X.Y"]`)
+    """
+    argv = [sys.executable, *args]
+    if running_under_mwpython():
+        argv += mwpython_version_args()
+    return argv
+
+
+# ----------------------------------------------------------------------
 #   USER INPUT
 # ----------------------------------------------------------------------
 

@@ -7,6 +7,7 @@ from .impl import install, uninstall
 from .utils import (
   guess_arch,
   guess_prefix,
+  mwpython_version_args,
   resolve_runtime,
   VersionNotFoundError,
 )
@@ -104,7 +105,8 @@ def _has_mwpython(path):
     return op.exists(op.join(path, "bin", "mwpython"))
 
 
-def _find_mwpython_runtime(variant="latest_installed", python_version=None):
+def _find_mwpython_runtime(variant="latest_installed", python_version=None,
+                           prefix=None):
     """
     Find the MATLAB Runtime whose `mwpython` should wrap python (macOS).
 
@@ -116,6 +118,10 @@ def _find_mwpython_runtime(variant="latest_installed", python_version=None):
         supports `python_version`.
     python_version : str | tuple, optional
         Python version to wrap. Default: the running Python.
+    prefix : str, optional
+        Installation prefix (or release folder) searched first, as in
+        `matlab_runtime.init`. Default: `$MATLAB_RUNTIME_PATH` if set,
+        else `guess_prefix()`.
 
     Returns
     -------
@@ -134,50 +140,60 @@ def _find_mwpython_runtime(variant="latest_installed", python_version=None):
     if python_version is None:
         python_version = sys.version_info
     return resolve_runtime(
-        variant, python_version=python_version, accept=_has_mwpython
+        variant, prefix, python_version=python_version, accept=_has_mwpython
     )
 
 
-def mpython(args=None):
-    # Python wrapper that replaces MathWorks's mwpython.
-    # Uses DYLD_FALLBACK_LIBRARY_PATH instead of DYLD_LIBRARY_PATH.
-    # Uses the calling python to determine which python to wrap.
-    if args is None:
-        args = sys.argv[1:]
-    args = list(args)
-    ENV = os.environ
+class _MPythonError(RuntimeError):
+    """
+    `mwpython` cannot be used (e.g., not on macOS).
 
-    command = []
-    module = []
-    args_ = []
-    variant = "latest_installed"
-    verbose = False
+    Raised by `_mpython_command`; `mpython` prints it and exits with
+    `returncode`.
+    """
 
-    while args:
-        arg = args.pop(0)
-        if arg in ("-h", "-?", "-help"):
-            print(_mpython_help)
-            return 0
-        elif arg == "-verbose":
-            verbose = True
-        elif arg == "-variant":
-            if not args:
-                print("Argument following -variant must not be empty")
-                return 1
-            variant = args.pop(0)
-        elif arg == "-c":
-            if not args:
-                print("Argument following -c must not be empty")
-                return 1
-            command, args = args, []
-        elif arg == "-m":
-            if not args:
-                print("Argument following -m must not be empty")
-                return 1
-            module, args = args, []
-        else:
-            args_ += [arg]
-    args = args_
+    def __init__(self, message, returncode=1):
+        super().__init__(message)
+        self.returncode = returncode
+
+
+def _mpython_command(args, variant="latest_installed", verbose=False,
+                     prefix=None):
+    """
+    Command and environment that run python through mwpython (macOS).
+
+    Uses DYLD_FALLBACK_LIBRARY_PATH instead of DYLD_LIBRARY_PATH, and
+    the calling python to determine which python to wrap.
+    `os.environ` is not modified.
+
+    Parameters
+    ----------
+    args : list[str]
+        Arguments passed to python, e.g. `["-m", "module"]`.
+    variant : str
+        MATLAB runtime version to use (see `_find_mwpython_runtime`).
+    verbose : bool
+        Print what is being done.
+    prefix : str, optional
+        Installation prefix (or release folder) searched first
+        (see `_find_mwpython_runtime`).
+
+    Returns
+    -------
+    argv : list[str]
+        Command to run.
+    env : dict[str, str]
+        Environment to run it in.
+
+    Raises
+    ------
+    _MPythonError
+        If not on macOS.
+    VersionNotFoundError
+        If no suitable runtime is installed (`RuntimeNotFoundError`), or
+        if it does not support this python (`UnsupportedPythonError`).
+    """
+    ENV = dict(os.environ)
 
     # --- ARCH ---------------------------------------------------------
 
@@ -187,19 +203,14 @@ def mpython(args=None):
     arch = guess_arch()
 
     if arch[:3] != "mac":
-        print("Execute mwpython only on Mac.")
-        return 10
+        raise _MPythonError("Execute mwpython only on Mac.", 10)
 
     if verbose:
         print(f"arch: {arch}")
 
     python_version = f"{sys.version_info.major}.{sys.version_info.minor}"
 
-    try:
-        variant, mcrroot = _find_mwpython_runtime(variant, python_version)
-    except VersionNotFoundError as e:
-        print(e, file=sys.stderr)
-        return 1
+    variant, mcrroot = _find_mwpython_runtime(variant, python_version, prefix)
     exe_dir = op.join(mcrroot, "bin")
     if verbose:
         print(f"Found mwpython for MATLAB {variant} at {exe_dir}")
@@ -272,53 +283,92 @@ def mpython(args=None):
     if not mwpython_app:
         raise RuntimeError("Failed to locate mwpython")
 
-    # --- subprocess ---------------------------------------------------
-    flag_and_ver = ["-mwpythonver", python_version]
-    opt = dict(env=ENV)
+    return [mwpython_app, *args, *mwpython_version_args(python_version)], ENV
 
-    # --- command ------------------------------------------------------
+
+def mpython(args=None):
+    """
+    Python wrapper that replaces MathWorks's `mwpython` (macOS).
+
+    Parses the `mwpython` options (`-h`, `-verbose`, `-variant X`,
+    `-c ...`, `-m ...`), builds the command with `_mpython_command` and
+    runs it. Errors are printed rather than raised.
+
+    Parameters
+    ----------
+    args : list[str], optional
+        Command-line arguments. Default: `sys.argv[1:]`.
+
+    Returns
+    -------
+    int
+        Exit code: that of the python process, 10 if not on macOS,
+        1 for invalid options or if no suitable runtime is found.
+    """
+    if args is None:
+        args = sys.argv[1:]
+    args = list(args)
+
+    command = []
+    module = []
+    args_ = []
+    variant = "latest_installed"
+    verbose = False
+
+    while args:
+        arg = args.pop(0)
+        if arg in ("-h", "-?", "-help"):
+            print(_mpython_help)
+            return 0
+        elif arg == "-verbose":
+            verbose = True
+        elif arg == "-variant":
+            if not args:
+                print("Argument following -variant must not be empty")
+                return 1
+            variant = args.pop(0)
+        elif arg == "-c":
+            if not args:
+                print("Argument following -c must not be empty")
+                return 1
+            command, args = args, []
+        elif arg == "-m":
+            if not args:
+                print("Argument following -m must not be empty")
+                return 1
+            module, args = args, []
+        else:
+            args_ += [arg]
+    args = args_
+
     if command:
-        command_and_version = command + flag_and_ver
-        if verbose:
-            print(
-                f"Executing command: "
-                f"{mwpython_app} -c {' '.join(command_and_version)}"
-            )
-        p = subprocess.run([mwpython_app, "-c", *command_and_version], **opt)
-        ret = p.returncode
-        if ret:
-            print(
-                f"The following command failed with return value {ret}: "
-                f"{mwpython_app} -c {' '.join(command)}"
-            )
-        return ret
+        what, args = "Executing command: ", ["-c", *command]
+    elif module:
+        what, args = "Executing module: ", ["-m", *module]
+    else:
+        what = "Executing: "
 
-    # --- module -------------------------------------------------------
-    if module:
-        module_and_version = module + flag_and_ver
-        if verbose:
-            print(
-                f"Executing module: "
-                f"{mwpython_app} -m {' '.join(module_and_version)}"
-            )
-        p = subprocess.run([mwpython_app, "-m", *module_and_version], **opt)
-        ret = p.returncode
-        if ret:
-            print(
-                f"The following command failed with return value {ret}: "
-                f"{mwpython_app} -m {' '.join(module)}"
-            )
-        return ret
+    try:
+        argv, env = _mpython_command(args, variant, verbose)
+    except _MPythonError as e:
+        print(e)
+        return e.returncode
+    except VersionNotFoundError as e:
+        print(e, file=sys.stderr)
+        return 1
+    # As before `_mpython_command` was extracted, `mpython` exports the
+    # mwpython environment (PYTHONHOME, DYLD_FALLBACK_LIBRARY_PATH, ...)
+    os.environ.update(env)
 
-    # --- args ---------------------------------------------------------
-    args_and_version = args + flag_and_ver
     if verbose:
+        print(what + " ".join(argv))
+    ret = subprocess.run(argv, env=env).returncode
+    if ret and (command or module):
         print(
-            f"Executing: "
-            f"{mwpython_app} {' '.join(args_and_version)}"
+            f"The following command failed with return value {ret}: "
+            f"{' '.join(argv[:-2])}"
         )
-    p = subprocess.run([mwpython_app, *args_and_version], **opt)
-    return p.returncode
+    return ret
 
 
 # backward compatibility !! DO NOT REMOVE !!
