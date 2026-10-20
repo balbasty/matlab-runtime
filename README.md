@@ -425,7 +425,12 @@ remote.shutdown()  # Optional: also done at exit
   64 MB by default in Docker/Podman (use `--shm-size=...` or
   `--ipc=host`) and Kubernetes (mount an `emptyDir` with
   `medium: Memory` at `/dev/shm`). When it is short of space, arrays
-  are sent inline instead (slower, but it works).
+  are sent inline instead (slower, but it works). Large results are
+  numpy views of their shared memory, which is freed once they (and
+  their views) are gone, or when the worker stops; passing them, or
+  contiguous slices of them, back to MATLAB copies nothing on the
+  python side (in-place edits are seen). If the python process is
+  killed hard, the segments of live results leak.
 
 `remote.import_deployed` starts the worker (with default options) if
 `remote.init` has not been called, with the release the package was

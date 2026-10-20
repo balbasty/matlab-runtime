@@ -20,7 +20,7 @@ from multiprocessing.connection import Listener
 from multiprocessing import AuthenticationError
 
 from . import protocol
-from .convert import SharedArrays, is_ndarray, walk
+from .convert import SharedArrays, is_ndarray, unlink_owned, walk
 from ..utils import MODE_ENV
 from .protocol import (
     RemoteRef,
@@ -204,10 +204,13 @@ class Session:
     `TimeoutError`) are discarded, and the remote objects they carry
     are released. Releasing a `RemoteHandle` never talks to the worker:
     object ids are queued and piggyback on the next request. Shared
-    memory segments sent to the worker are kept until it replies;
-    segments in its reply are acknowledged (`ack`, with the id of the
-    reply) once they have been copied out, or discarded if the reply
-    is stale.
+    memory segments sent to the worker (including those passed by
+    reference) are kept until it replies. Segments in its reply are
+    taken over: arrays are returned as views of them, and they are
+    unlinked when the last view is gone (or when the session ends).
+    The reply is acknowledged (`ack`, with its id and the names of the
+    segments taken over) so that the worker unlinks the others, e.g.
+    those of a stale reply.
     """
 
     def __init__(self, executable=None, use_mpython=None,
@@ -481,10 +484,12 @@ class Session:
 
         The shared memory of the reply is acknowledged (with the reply's
         own id, so that the worker frees exactly these segments) even if
-        the reply is stale or its conversion is interrupted. Remote
+        the reply is stale or its conversion is interrupted, listing the
+        segments taken over (the worker unlinks the others). Remote
         objects of a reply that is not returned are queued for release.
         """
         rid = reply.get("id")
+        taken = []
         out = self.shm_out.pop(rid, None)
         if out is not None:
             out.release()
@@ -502,7 +507,9 @@ class Session:
 
             def leaf(x):
                 if isinstance(x, ShmArray):
-                    return SharedArrays.attach(x)
+                    array = SharedArrays.attach(x)
+                    taken.append(x.name)
+                    return array
                 if isinstance(x, RemoteRef):
                     return RemoteHandle(self, x)
                 return x
@@ -516,7 +523,7 @@ class Session:
         finally:
             if reply.get("shm"):
                 self._send({"id": None, "op": "ack", "ack": rid,
-                            "release": []})
+                            "keep": taken, "release": []})
 
     def _exchange(self, op, shm=None, timeout=None, **fields):
         with self.lock:
@@ -531,7 +538,7 @@ class Session:
             while self.released:
                 released.append(self.released.popleft())
             msg = {"id": rid, "op": op, "release": released, **fields}
-            if shm is not None and shm.segments:
+            if shm is not None and (shm.segments or shm.borrowed):
                 self.shm_out[rid] = shm
             try:
                 self._send(msg)
@@ -583,7 +590,8 @@ class Session:
         Call a remote object, or one of its methods.
 
         Numpy arrays in the arguments are exported (through shared
-        memory if large), `RemoteHandle` objects are replaced by their
+        memory if large; views of the shared memory of earlier results
+        are passed by reference), `RemoteHandle` objects are replaced by their
         reference. File-like `stdout`/`stderr` keyword arguments
         receive the output printed by MATLAB during the call.
 
@@ -680,7 +688,9 @@ class Session:
         terminated, then killed, together with the processes that it
         started (its process group on POSIX, its process tree on
         Windows). Output pumps are joined, the connection is closed,
-        shared memory is released and the socket directory is removed.
+        shared memory is released (the segments of the results are
+        unlinked, see `convert.unlink_owned`) and the socket directory
+        is removed.
         Safe to call several times.
 
         Parameters
@@ -751,6 +761,7 @@ class Session:
         for shm in self.shm_out.values():
             shm.release()
         self.shm_out.clear()
+        unlink_owned()
         self.released.clear()
         if self.tmpdir:
             shutil.rmtree(self.tmpdir, ignore_errors=True)
