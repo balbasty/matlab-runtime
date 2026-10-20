@@ -378,7 +378,9 @@ def test_worker_reads_shared_memory_no_copy(monkeypatch):
     def array(self, dtype=None, copy=None):
         return np.asarray(self.initializer, dtype)
 
-    borrowing = type("double", (matlab.double,), {
+    # Not a subclass: when the real SDK was imported earlier in the
+    # session, `matlab` is the real module and its types are final.
+    borrowing = type("double", (), {
         "__init__": init, "__array__": array, "__module__": "matlab",
     })
     monkeypatch.setattr(matlab, "double", borrowing)
