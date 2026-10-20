@@ -199,7 +199,10 @@ def test_shared_memory(pkg, shm_names):
     assert (y[0] == np.arange(10000)).all()
     # Segments were used both ways
     assert len(shm_names) >= 3
-    # The worker unlinks its segments when it gets the acknowledgment
+    # The client unlinks its arguments' segments when it gets the reply,
+    # and the segments of the results once they are gone
+    del y
+    gc.collect()
     session().request("ping")
     assert leaked(shm_names) == []
 
@@ -221,6 +224,8 @@ def test_shared_memory_abandoned_reply(pkg, shm_names, monkeypatch):
         y = pkg.big(10000)
         assert (y[0] == np.arange(10000)).all()
     assert len(shm_names) == 3
+    del y
+    gc.collect()
     session().request("ping")
     assert leaked(shm_names) == []
 
@@ -243,6 +248,154 @@ def test_interrupted_conversion(pkg, shm_names, monkeypatch):
     assert len(shm_names) == 1 and leaked(shm_names) == []
     y, obj = pkg.big_and_obj(10000)
     assert y.shape == (1, 10000) and obj.value() == 42
+
+
+def segment_of(array):
+    """The `SharedSegment` that owns the memory of `array` (or None)."""
+    return convert._segment_of(array)
+
+
+@pytest.fixture
+def exports(monkeypatch):
+    """`(output, new segments)` of each array exported by the client."""
+    calls = []
+    export = client.SharedArrays.export
+
+    def spy(self, array):
+        before = len(self.segments)
+        out = export(self, array)
+        calls.append((out, len(self.segments) - before))
+        return out
+    monkeypatch.setattr(client.SharedArrays, "export", spy)
+    return calls
+
+
+def test_results_are_views(pkg):
+    y = pkg.big(10000)
+    segment = segment_of(y)
+    assert isinstance(segment, convert.SharedSegment) and segment.linked
+    assert y.flags.writeable
+    view = np.asarray(segment)
+    assert np.shares_memory(y, view)
+    view[0, 0] = -1
+    assert y[0, 0] == -1
+
+
+def test_round_trip_by_reference(pkg, exports):
+    x = np.random.rand(100, 50)
+    y = pkg.ident(x)
+    assert len(exports) == 1 and exports[0][1] == 1
+    name = segment_of(y).name
+    # Passed back without a new segment
+    z = pkg.ident(y)
+    out, created = exports[1]
+    assert isinstance(out, protocol.ShmArray) and out.name == name
+    assert created == 0
+    assert (z == x).all() and not np.shares_memory(y, z)
+    # In-place edits are sent too
+    y[0, 0] = -1
+    z = pkg.ident(y)
+    assert exports[2][0].name == name and z[0, 0] == -1
+    assert (z == y).all()
+
+
+def test_views_by_reference(pkg, exports):
+    class Sub(np.ndarray):
+        pass
+    y = pkg.ident(np.random.rand(100, 50))
+    assert y.flags.f_contiguous
+    name = segment_of(y).name
+    # A subclass view (as mpython does)
+    s = np.ndarray.view(y, Sub)
+    assert (pkg.ident(s) == y).all()
+    assert exports[-1][0].name == name and exports[-1][1] == 0
+    # A contiguous slice, at an offset
+    assert (pkg.ident(y[:, 20:40]) == y[:, 20:40]).all()
+    out, created = exports[-1]
+    assert out.name == name and out.offset == 20 * 100 * 8
+    assert created == 0
+    # Not contiguous: copied into a new segment
+    assert (pkg.ident(y[10:90]) == y[10:90]).all()
+    out, created = exports[-1]
+    assert out.name != name and created == 1
+
+
+@pytest.mark.skipif(os.name != "posix", reason="segments have no name")
+def test_result_segment_freed(pkg):
+    y = pkg.big(10000)
+    v = y[:, 10:]
+    name = segment_of(y).name
+    session().request("ping")
+    assert shm_exists(name)
+    del y
+    gc.collect()
+    assert shm_exists(name)
+    del v
+    gc.collect()
+    assert not shm_exists(name)
+
+
+def test_result_segments_unlinked_on_shutdown(pkg, exports):
+    y = pkg.big(10000)
+    segment = segment_of(y)
+    remote.shutdown()
+    assert not segment.linked
+    if os.name == "posix":
+        assert not shm_exists(segment.name)
+    # Still usable, and sent by copy to the next worker
+    assert (y[0] == np.arange(10000)).all()
+    remote.init(use_mpython=False)
+    pkg = remote.import_deployed("fake_package")
+    assert (pkg.ident(y) == y).all()
+    assert exports[-1][0].name != segment.name and exports[-1][1] == 1
+
+
+def test_worker_reads_shared_memory():
+    # matlab.* constructors copy: the worker can close the segment
+    # (which the client owns) right after converting it.
+    from tests._fake_sdk.backend import matlab
+    x = np.random.rand(100, 50)
+    shared = convert.SharedArrays(4096)
+    ref = shared.export(x)
+    try:
+        y = worker.Worker(None, None).from_wire([ref])[0]
+        assert isinstance(y, matlab.double)
+        view = np.ndarray(x.shape, x.dtype, shared.segments[0].buf)
+        view[...] = 0
+        del view
+        assert (np.asarray(y) == x).all()
+    finally:
+        shared.release()
+
+
+def test_worker_reads_shared_memory_no_copy(monkeypatch):
+    # A constructor that keeps the initializer gets a private copy
+    from tests._fake_sdk.backend import matlab
+
+    def init(self, initializer=None, size=None, is_complex=False):
+        self.initializer = initializer
+
+    def array(self, dtype=None, copy=None):
+        return np.asarray(self.initializer, dtype)
+
+    borrowing = type("double", (matlab.double,), {
+        "__init__": init, "__array__": array, "__module__": "matlab",
+    })
+    monkeypatch.setattr(matlab, "double", borrowing)
+    monkeypatch.setattr(convert, "_COPIES", {})
+    x = np.random.rand(100, 50)
+    shared = convert.SharedArrays(4096)
+    ref = shared.export(x)
+    try:
+        y = worker.Worker(None, None).from_wire([ref])[0]
+        assert isinstance(y, borrowing)
+        view = np.ndarray(x.shape, x.dtype, shared.segments[0].buf)
+        assert not np.shares_memory(y.initializer, view)
+        view[...] = 0
+        del view
+        assert (np.asarray(y) == x).all()
+    finally:
+        shared.release()
 
 
 def _serve(conn):
@@ -305,7 +458,10 @@ def test_shared_memory_no_leak_warnings(tmp_path):
         x = np.random.rand(1000)
         assert (pkg.ident(x) == x).all()
         assert pkg.big(1000).shape == (1, 1000)
-        assert len(_SHM_NAMES) == 3
+        # Still alive at exit: unlinked by the atexit handler
+        y = pkg.big(1000)
+        assert (pkg.ident(y) == y).all()
+        assert len(_SHM_NAMES) == 5
         print("names:", *_SHM_NAMES)
         print("done")
     """))
@@ -322,6 +478,7 @@ def test_shared_memory_no_leak_warnings(tmp_path):
     assert "done" in p.stdout
     assert "Warning" not in p.stderr, p.stderr
     assert "leaked" not in p.stderr, p.stderr
+    assert "Exception ignored" not in p.stderr, p.stderr
     names = [line for line in p.stdout.splitlines() if line[:6] == "names:"]
     assert leaked(names[0].split()[1:]) == []
 

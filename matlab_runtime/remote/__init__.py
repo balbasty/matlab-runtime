@@ -165,7 +165,8 @@ def init(
         only 64 MB by default in Docker/Podman (`--shm-size=...` or
         `--ipc=host`) and Kubernetes (`emptyDir` with
         `medium: Memory` mounted at `/dev/shm`). Arrays that do not
-        fit are sent inline instead (slower).
+        fit are sent inline instead (slower). Large results are views
+        of their shared memory, and are passed back without a copy.
 
     Raises
     ------

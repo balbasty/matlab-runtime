@@ -184,7 +184,9 @@ class Worker:
     the return value is the `result` of the reply). Exceptions are
     sent back to the client. Shared memory segments of a reply are kept
     until the client acknowledges that reply (`ack` message with the
-    reply's id), and all of them are freed when the worker stops.
+    reply's id), and those that the client did not take over are then
+    unlinked; all of them are freed when the worker stops. Segments
+    that the client owns and passes as arguments are only read.
     """
 
     def __init__(self, conn, backend):
@@ -222,11 +224,14 @@ class Worker:
         Convert the arguments of a request.
 
         `RemoteRef` become the objects they refer to, numpy arrays
-        (also those in shared memory) become `matlab.*` arrays.
+        become `matlab.*` arrays (straight from shared memory, which is
+        then closed).
         """
         def leaf(x):
             if isinstance(x, ShmArray):
-                x = SharedArrays.attach(x)
+                return SharedArrays.read(
+                    x, lambda a: numpy_to_matlab(a, borrowed=True)
+                )
             if isinstance(x, RemoteRef):
                 return self._lookup(x)
             if is_ndarray(x):
@@ -347,16 +352,17 @@ class Worker:
         """Do nothing: objects are released by `serve` for any op."""
         pass
 
-    def release_pending(self, rid):
+    def release_pending(self, rid, keep=()):
         """
         Free the shared memory of the reply `rid` (if any).
 
         An acknowledgment only ever frees the segments of the reply that
-        it names; unknown ids are ignored.
+        it names; unknown ids are ignored. Segments named in `keep` have
+        been taken over by the client: they are closed, not unlinked.
         """
         shm = self.pending.pop(rid, None)
         if shm is not None:
-            shm.release()
+            shm.release(keep)
 
     def release_all_pending(self):
         """Free the shared memory of all the replies."""
@@ -409,7 +415,8 @@ class Worker:
         Receive and handle requests until the client goes away.
 
         Every message first frees the objects listed in its `release`
-        field. An `ack` message (field `ack`: id of a reply) frees the
+        field. An `ack` message (fields `ack`: id of a reply, `keep`:
+        names of the segments that the client took over) frees the
         shared memory of that reply and needs no reply; `shutdown` is
         answered, then stops the loop, as does a closed connection.
         All the shared memory still held is freed on the way out
@@ -424,7 +431,7 @@ class Worker:
                 for oid in msg.get("release", ()):
                     self.objects.pop(oid, None)
                 if msg["op"] == "ack":
-                    self.release_pending(msg["ack"])
+                    self.release_pending(msg["ack"], msg.get("keep", ()))
                     continue
                 try:
                     if msg["op"] == "shutdown":

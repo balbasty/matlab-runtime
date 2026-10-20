@@ -3,7 +3,9 @@ Conversion of values to and from their wire representation.
 
 * `walk` maps a function over the leaves of (nested) lists, tuples and
   dicts, which is how both sides convert arguments and results.
-* `SharedArrays` moves large numpy arrays through shared memory.
+* `SharedArrays` moves large numpy arrays through shared memory. The
+  client keeps the segments of the worker's replies (`SharedSegment`)
+  and sends them back by reference.
 * `matlab_to_numpy` / `numpy_to_matlab` are only used in the worker.
 
 numpy is imported lazily so that the client does not depend on it.
@@ -12,6 +14,7 @@ import errno
 import os
 import secrets
 import sys
+import weakref
 
 from .protocol import ShmArray
 
@@ -133,16 +136,160 @@ def _reserve(shm):
         raise OSError(errno.ENOSPC, os.strerror(errno.ENOSPC), "/dev/shm")
 
 
+_Segment = None
+
+
+def _open(name):
+    """
+    Open an existing segment, which the resource tracker does not follow.
+
+    The segment is a `SharedMemory` whose `__del__` tolerates views
+    that are still alive (the mapping is then left to the process).
+    """
+    global _Segment
+    if _Segment is None:
+        from multiprocessing.shared_memory import SharedMemory
+
+        class _Segment(SharedMemory):
+            def __del__(self):
+                try:
+                    self.close()
+                except (OSError, BufferError):
+                    pass
+    if sys.version_info >= (3, 13):
+        return _Segment(name, track=False)
+    shm = _Segment(name)
+    if os.name == "posix":
+        # Attaching registers the segment with the resource tracker,
+        # which would unlink it (and warn) at exit.
+        from multiprocessing import resource_tracker
+        resource_tracker.unregister(shm._name, "shared_memory")
+    return shm
+
+
+def _unlink(shm):
+    """Unlink a segment opened by `_open` (errors are ignored)."""
+    if os.name != "posix":
+        return  # Windows: it goes away with its last handle
+    try:
+        if sys.version_info >= (3, 13):
+            shm.unlink()
+        else:
+            # `unlink()` would unregister it from the resource tracker,
+            # which does not know it.
+            from multiprocessing.shared_memory import _posixshmem
+            _posixshmem.shm_unlink(shm._name)
+    except OSError:
+        pass  # e.g. already unlinked by the worker
+
+
+# Segments owned by this process and not unlinked yet:
+# name -> (SharedMemory, pid)
+_OWNED = {}
+
+
+def _free(shm, holder, pid):
+    # Finalizer of `SharedSegment`: drop the last export of the
+    # mapping, close it, and unlink it (not from a forked child).
+    holder.clear()
+    try:
+        shm.close()
+    except (OSError, BufferError):
+        pass
+    if os.getpid() == pid and _OWNED.pop(shm.name, None) is not None:
+        _unlink(shm)
+
+
+def unlink_owned():
+    """
+    Unlink all the segments owned by this process.
+
+    Called when the session ends (and so at exit). The arrays that use
+    them stay valid, but are sent to the worker by copy from then on.
+    If the client is killed hard, its segments leak.
+    """
+    for name in list(_OWNED):
+        entry = _OWNED.pop(name, None)
+        if entry is not None and entry[1] == os.getpid():
+            _unlink(entry[0])
+
+
+class SharedSegment:
+    """
+    Owner of a shared memory segment received from the worker.
+
+    Arrays returned by `SharedArrays.attach` are views of it: it is at
+    the end of their `.base` chain. Once it is garbage collected, i.e.
+    when the last view is gone, the segment is closed and unlinked.
+
+    Attributes
+    ----------
+    name : str
+        Name of the segment.
+    nbytes : int
+        Size of its data.
+    linked : bool
+        Whether it can still be opened by name (see `unlink_owned`).
+    """
+
+    def __init__(self, shm, ref):
+        """
+        Parameters
+        ----------
+        shm : multiprocessing.shared_memory.SharedMemory
+            Segment (opened with `_open`), closed with this object.
+        ref : ShmArray
+            Description of the array that it holds.
+        """
+        np = import_numpy("client")
+        array = np.ndarray(
+            ref.shape, ref.dtype, shm.buf, ref.offset, order=ref.order
+        )
+        self.name = shm.name
+        self.nbytes = array.nbytes
+        # Views get the address of the data from here: they keep this
+        # object alive, not `array`, which holds the only export of the
+        # mapping (so that the finalizer can close it).
+        self.__array_interface__ = array.__array_interface__
+        self._shm = shm
+        pid = os.getpid()
+        _OWNED[self.name] = (shm, pid)
+        weakref.finalize(self, _free, shm, [array], pid).atexit = False
+
+    @property
+    def linked(self):
+        entry = _OWNED.get(self.name)
+        return entry is not None and entry[0] is self._shm
+
+
+def _segment_of(array):
+    """The `SharedSegment` at the end of the `.base` chain, or None."""
+    np = import_numpy()
+    base = array
+    while base is not None:
+        if isinstance(base, SharedSegment):
+            return base
+        if isinstance(base, memoryview):
+            base = base.obj
+        elif isinstance(base, np.ndarray):
+            base = base.base
+        else:
+            return None
+    return None
+
+
 class SharedArrays:
     """
-    Shared memory segments created by one side for one message.
+    Shared memory segments used by one side for one message.
 
-    The sender keeps its segments open until the peer is done with them
-    (on Windows, a segment disappears with its last handle), and then
-    calls `release()`: the client when it gets the reply to its
-    request, the worker when the client acknowledges that reply (`ack`
-    message naming the reply's id). The receiver copies the data out
-    with `attach()`.
+    The sender keeps the segments that it creates open until the peer
+    is done with them (on Windows, a segment disappears with its last
+    handle), and then calls `release()`: the client when it gets the
+    reply to its request, the worker when the client acknowledges that
+    reply (`ack` message naming the reply's id). The client takes
+    the segments of a reply over (`attach`): it returns views of them,
+    and sends them back by reference (`export`); the worker copies
+    the data out (`read`).
     """
 
     def __init__(self, threshold, track=True):
@@ -159,6 +306,8 @@ class SharedArrays:
         self.threshold = threshold
         self.track = track
         self.segments = []
+        # Owned segments sent by reference, kept alive until `release`
+        self.borrowed = []
 
     @property
     def names(self):
@@ -169,11 +318,12 @@ class SharedArrays:
         """
         Return `array` or, if it is large, a `ShmArray` describing it.
 
-        The array is copied into a new segment, which is kept until
-        `release()` is called. Arrays below the threshold, arrays of
-        objects, and arrays for which no segment can be allocated
-        (e.g. `/dev/shm` is full) are returned unchanged (and are then
-        pickled).
+        A (C or F) contiguous view of a segment owned by this process
+        (see `attach`) is sent by reference. Otherwise, the array is
+        copied into a new segment, which is kept until `release()` is
+        called. Arrays below the threshold, arrays of objects, and
+        arrays for which no segment can be allocated (e.g. `/dev/shm`
+        is full) are returned unchanged (and are then pickled).
 
         Parameters
         ----------
@@ -190,6 +340,9 @@ class SharedArrays:
             or array.dtype.hasobject
         ):
             return array
+        ref = self._reference(array)
+        if ref is not None:
+            return ref
         np = import_numpy()
         from multiprocessing.shared_memory import SharedMemory
         kwargs = {}
@@ -221,20 +374,49 @@ class SharedArrays:
         del view
         return ShmArray(shm.name, array.dtype, array.shape, order)
 
-    def release(self):
-        """Close and unlink all segments (errors are ignored)."""
+    def _reference(self, array):
+        # A `ShmArray` pointing into the owned segment that holds
+        # `array`, or None.
+        segment = _segment_of(array)
+        if segment is None or not segment.linked:
+            return None
+        if array.flags.c_contiguous:
+            order = "C"
+        elif array.flags.f_contiguous:
+            order = "F"
+        else:
+            return None
+        offset = (array.__array_interface__["data"][0]
+                  - segment.__array_interface__["data"][0])
+        if offset < 0 or offset + array.nbytes > segment.nbytes:
+            return None
+        self.borrowed.append(segment)
+        return ShmArray(segment.name, array.dtype, array.shape, order, offset)
+
+    def release(self, keep=()):
+        """
+        Close the segments and unlink them (errors are ignored).
+
+        Parameters
+        ----------
+        keep : collection[str]
+            Names of the segments not to unlink (taken over by the
+            client).
+        """
         segments, self.segments = self.segments, []
+        self.borrowed = []
         for shm in segments:
             try:
                 shm.close()
-                shm.unlink()
+                if shm.name not in keep:
+                    shm.unlink()
             except (OSError, BufferError):
                 pass
 
     @staticmethod
     def attach(ref):
         """
-        Copy the array described by a `ShmArray` out of shared memory.
+        Take over the segment of a `ShmArray` (client).
 
         Parameters
         ----------
@@ -244,27 +426,56 @@ class SharedArrays:
         Returns
         -------
         numpy.ndarray
-            A private copy; the segment is closed but not unlinked
-            (its creator does that).
+            A view of the segment, which is now owned by a
+            `SharedSegment` (see there) at the end of its `.base`
+            chain. The worker must be told not to unlink it.
+        """
+        np = import_numpy("client")
+        shm = _open(ref.name)
+        try:
+            segment = SharedSegment(shm, ref)
+        except BaseException:
+            try:
+                shm.close()
+            except BufferError:
+                pass
+            raise
+        return np.asarray(segment)
+
+    @staticmethod
+    def read(ref, convert):
+        """
+        Convert the array of a `ShmArray` without owning it (worker).
+
+        Parameters
+        ----------
+        ref : ShmArray
+            Description of the array and its segment.
+        convert : callable
+            Applied to a numpy view of the segment. Its result must not
+            refer to the view, as the segment is then closed (but not
+            unlinked: its owner does that).
+
+        Returns
+        -------
+        object
+            The output of `convert`.
         """
         np = import_numpy()
-        from multiprocessing.shared_memory import SharedMemory
-        if sys.version_info >= (3, 13):
-            shm = SharedMemory(ref.name, track=False)
-        else:
-            shm = SharedMemory(ref.name)
-            if os.name == "posix":
-                # Attaching registers the segment with the resource
-                # tracker, which would unlink it (and warn) at exit.
-                from multiprocessing import resource_tracker
-                resource_tracker.unregister(shm._name, "shared_memory")
+        shm = _open(ref.name)
         try:
-            view = np.ndarray(ref.shape, ref.dtype, shm.buf, order=ref.order)
-            array = view.copy(order="K")
-            del view
+            view = np.ndarray(
+                ref.shape, ref.dtype, shm.buf, ref.offset, order=ref.order
+            )
+            try:
+                return convert(view)
+            finally:
+                del view
         finally:
-            shm.close()
-        return array
+            try:
+                shm.close()
+            except BufferError:
+                pass  # held by a traceback: closed when collected
 
 
 def untrack_shared_memory():
@@ -331,13 +542,37 @@ def matlab_to_numpy(obj):
     return array.astype(dtype, copy=False)
 
 
-def numpy_to_matlab(array):
+# (class, complex, order, dtype) -> whether the constructor copies
+_COPIES = {}
+
+
+def _copies(cls, kwargs, array):
+    """Whether `cls(array, **kwargs)` copies the data (probed once)."""
+    np = import_numpy()
+    order = "F" if array.flags.f_contiguous else "C"
+    key = (cls, bool(kwargs), order, array.dtype.str)
+    if key not in _COPIES:
+        probe = np.zeros((2, 2), array.dtype, order=order)
+        try:
+            obj = cls(probe, **kwargs)
+            probe[...] = 1
+            _COPIES[key] = not matlab_to_numpy(obj).any()
+        except Exception:
+            _COPIES[key] = False
+    return _COPIES[key]
+
+
+def numpy_to_matlab(array, borrowed=False):
     """
     Convert a numpy array to the corresponding `matlab.*` array.
 
     Parameters
     ----------
     array : numpy.ndarray
+    borrowed : bool
+        The memory of `array` is about to go away (e.g. a view of a
+        shared memory segment): copy it first, unless the `matlab.*`
+        constructor is known to copy anyway.
 
     Returns
     -------
@@ -355,6 +590,8 @@ def numpy_to_matlab(array):
     # `matlab.logical` has no `is_complex` argument: only pass it when
     # needed (complex arrays are always `double` or `single`).
     kwargs = {"is_complex": True} if array.dtype.kind == "c" else {}
+    if borrowed and not _copies(cls, kwargs, array):
+        array = array.copy(order="K")
     try:
         return cls(array, **kwargs)
     except Exception:

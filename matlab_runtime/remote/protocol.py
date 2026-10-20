@@ -10,7 +10,7 @@ import importlib
 import pickle
 import traceback
 
-PROTOCOL_VERSION = 3
+PROTOCOL_VERSION = 4
 
 ENV_ADDR = "MATLAB_RUNTIME_WORKER_ADDR"
 ENV_KEY = "MATLAB_RUNTIME_WORKER_KEY"
@@ -90,9 +90,9 @@ class RemoteRef:
 class ShmArray:
     """Numpy array stored in a shared memory segment."""
 
-    __slots__ = ("name", "dtype", "shape", "order")
+    __slots__ = ("name", "dtype", "shape", "order", "offset")
 
-    def __init__(self, name, dtype, shape, order="C"):
+    def __init__(self, name, dtype, shape, order="C", offset=0):
         """
         Parameters
         ----------
@@ -104,14 +104,19 @@ class ShmArray:
             Shape of the array.
         order : {"C", "F"}
             Memory layout of the data in the segment.
+        offset : int
+            Position (in bytes) of the data in the segment.
         """
         self.name = name
         self.dtype = dtype
         self.shape = shape
         self.order = order
+        self.offset = offset
 
     def __reduce__(self):
-        return (ShmArray, (self.name, self.dtype, self.shape, self.order))
+        return (ShmArray, (
+            self.name, self.dtype, self.shape, self.order, self.offset
+        ))
 
 
 class StreamSink:
