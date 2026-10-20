@@ -429,8 +429,10 @@ remote.shutdown()  # Optional: also done at exit
   numpy views of their shared memory, which is freed once they (and
   their views) are gone, or when the worker stops; passing them, or
   contiguous slices of them, back to MATLAB copies nothing on the
-  python side (in-place edits are seen). If the python process is
-  killed hard, the segments of live results leak.
+  python side (in-place edits are seen). Live results occupy `/dev/shm`
+  for their whole lifetime, so with a small `/dev/shm` (64 MB by default
+  in Docker) later transfers may fall back to inline. If the python
+  process is killed hard, the segments of live results leak.
 
 `remote.import_deployed` starts the worker (with default options) if
 `remote.init` has not been called, with the release the package was
