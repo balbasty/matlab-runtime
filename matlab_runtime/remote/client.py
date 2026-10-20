@@ -263,6 +263,7 @@ class Session:
         self.ids = itertools.count(1)
         self.released = collections.deque()
         self.shm_out = {}       # request id -> SharedArrays
+        self._shm_owner = object()  # token of the segments it owns
         self.stderr_tail = collections.deque(maxlen=200)
         self.proc = self.conn = self.tmpdir = None
         self.pumps = []
@@ -507,7 +508,7 @@ class Session:
 
             def leaf(x):
                 if isinstance(x, ShmArray):
-                    array = SharedArrays.attach(x)
+                    array = SharedArrays.attach(x, self._shm_owner)
                     taken.append(x.name)
                     return array
                 if isinstance(x, RemoteRef):
@@ -630,7 +631,7 @@ class Session:
             if hasattr(kwargs.get(key), "write"):
                 streams[key] = kwargs[key]
                 kwargs[key] = StreamSink(key)
-        shm = SharedArrays(self.shm_threshold)
+        shm = SharedArrays(self.shm_threshold, owner=self._shm_owner)
 
         def leaf(x):
             if isinstance(x, RemoteHandle):
@@ -761,7 +762,7 @@ class Session:
         for shm in self.shm_out.values():
             shm.release()
         self.shm_out.clear()
-        unlink_owned()
+        unlink_owned(self._shm_owner)
         self.released.clear()
         if self.tmpdir:
             shutil.rmtree(self.tmpdir, ignore_errors=True)

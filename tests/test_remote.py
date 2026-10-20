@@ -213,9 +213,9 @@ def test_shared_memory_abandoned_reply(pkg, shm_names, monkeypatch):
     # segments of the next reply (slow down attach to expose it).
     attach = client.SharedArrays.attach
 
-    def slow_attach(ref):
+    def slow_attach(ref, *args):
         time.sleep(0.3)
-        return attach(ref)
+        return attach(ref, *args)
     monkeypatch.setattr(client.SharedArrays, "attach", slow_attach)
     pkg.big(1)  # cache the method: no getattr request in between
     with pytest.raises(TimeoutError):
@@ -237,7 +237,7 @@ def test_interrupted_conversion(pkg, shm_names, monkeypatch):
     gc.collect()
     count = session().request("ping")
 
-    def interrupt(ref):
+    def interrupt(ref, *args):
         raise KeyboardInterrupt
     with monkeypatch.context() as m:
         m.setattr(client.SharedArrays, "attach", interrupt)
@@ -348,6 +348,54 @@ def test_result_segments_unlinked_on_shutdown(pkg, exports):
     pkg = remote.import_deployed("fake_package")
     assert (pkg.ident(y) == y).all()
     assert exports[-1][0].name != segment.name and exports[-1][1] == 1
+
+
+def test_sessions_own_their_segments(pkg, exports):
+    # Closing one session does not unlink the results of another, and
+    # a session does not send another's segments by reference.
+    other = client.Session(use_mpython=False)
+    other.start()
+    try:
+        pkg2 = other.request("import", name="fake_package", file=None,
+                             option_list=[])
+        y = pkg.big(10000)
+        y2 = pkg2.big(10000)
+        segment, segment2 = segment_of(y), segment_of(y2)
+        assert (pkg2.ident(y) == y).all()
+        assert exports[-1][0].name != segment.name
+        other.close()
+        assert not segment2.linked and segment.linked
+        if os.name == "posix":
+            assert shm_exists(segment.name)
+            assert not shm_exists(segment2.name)
+        assert (pkg.ident(y) == y).all()
+        assert exports[-1][0].name == segment.name
+        assert (y2[0] == np.arange(10000)).all()
+    finally:
+        other.close()
+
+
+def test_reference_at_offset():
+    # A `ShmArray` with an offset, then a slice of it by reference
+    owner = object()
+    data = np.arange(3000, dtype=np.float64)
+    sender = convert.SharedArrays(4096)
+    seg = sender.export(data)
+    ref = protocol.ShmArray(seg.name, data.dtype, (1000,), "C", 1000 * 8)
+    try:
+        y = convert.SharedArrays.attach(ref, owner)
+        assert (y == data[1000:2000]).all()
+        shared = convert.SharedArrays(4096, owner=owner)
+        out = shared.export(y[200:])
+        assert isinstance(out, protocol.ShmArray) and out.name == seg.name
+        assert out.offset == 1200 * 8
+        z = convert.SharedArrays.read(out, np.array)
+        assert (z == data[1200:2000]).all()
+        del y
+        gc.collect()
+    finally:
+        sender.release(keep=[seg.name])
+        convert.unlink_owned(owner)
 
 
 def test_worker_reads_shared_memory():

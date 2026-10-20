@@ -10,6 +10,7 @@ Conversion of values to and from their wire representation.
 
 numpy is imported lazily so that the client does not depend on it.
 """
+import atexit
 import errno
 import os
 import secrets
@@ -157,13 +158,19 @@ def _open(name):
                 except (OSError, BufferError):
                     pass
     if sys.version_info >= (3, 13):
-        return _Segment(name, track=False)
-    shm = _Segment(name)
-    if os.name == "posix":
-        # Attaching registers the segment with the resource tracker,
-        # which would unlink it (and warn) at exit.
-        from multiprocessing import resource_tracker
-        resource_tracker.unregister(shm._name, "shared_memory")
+        shm = _Segment(name, track=False)
+    else:
+        shm = _Segment(name)
+        if os.name == "posix":
+            # Attaching registers the segment with the resource tracker,
+            # which would unlink it (and warn) at exit.
+            from multiprocessing import resource_tracker
+            resource_tracker.unregister(shm._name, "shared_memory")
+    fd = getattr(shm, "_fd", -1)
+    if isinstance(fd, int) and fd >= 0:
+        # The mapping does not need it (`close`/`unlink` use the name)
+        os.close(fd)
+        shm._fd = -1
     return shm
 
 
@@ -184,8 +191,9 @@ def _unlink(shm):
 
 
 # Segments owned by this process and not unlinked yet:
-# name -> (SharedMemory, pid)
+# name -> (SharedMemory, pid, owner)
 _OWNED = {}
+_ATEXIT = False
 
 
 def _free(shm, holder, pid):
@@ -200,14 +208,22 @@ def _free(shm, holder, pid):
         _unlink(shm)
 
 
-def unlink_owned():
+def unlink_owned(owner):
     """
-    Unlink all the segments owned by this process.
+    Unlink the segments of `owner` (a session token).
 
-    Called when the session ends (and so at exit). The arrays that use
-    them stay valid, but are sent to the worker by copy from then on.
-    If the client is killed hard, its segments leak.
+    Called when the session ends; all the remaining segments are
+    unlinked at exit. The arrays that use them stay valid, but are sent
+    to the worker by copy from then on. If the client is killed hard,
+    its segments leak.
     """
+    for name, entry in list(_OWNED.items()):
+        if entry[2] is owner and _OWNED.pop(name, None) is not None:
+            if entry[1] == os.getpid():
+                _unlink(entry[0])
+
+
+def _unlink_all():
     for name in list(_OWNED):
         entry = _OWNED.pop(name, None)
         if entry is not None and entry[1] == os.getpid():
@@ -228,11 +244,15 @@ class SharedSegment:
         Name of the segment.
     nbytes : int
         Size of its data.
+    offset : int
+        Offset of its data in the segment.
+    owner : object
+        Token of the session that owns it.
     linked : bool
         Whether it can still be opened by name (see `unlink_owned`).
     """
 
-    def __init__(self, shm, ref):
+    def __init__(self, shm, ref, owner=None):
         """
         Parameters
         ----------
@@ -240,21 +260,29 @@ class SharedSegment:
             Segment (opened with `_open`), closed with this object.
         ref : ShmArray
             Description of the array that it holds.
+        owner : object
+            Token of the session that owns it.
         """
+        global _ATEXIT
         np = import_numpy("client")
         array = np.ndarray(
             ref.shape, ref.dtype, shm.buf, ref.offset, order=ref.order
         )
         self.name = shm.name
         self.nbytes = array.nbytes
+        self.offset = ref.offset
+        self.owner = owner
         # Views get the address of the data from here: they keep this
         # object alive, not `array`, which holds the only export of the
         # mapping (so that the finalizer can close it).
         self.__array_interface__ = array.__array_interface__
         self._shm = shm
         pid = os.getpid()
-        _OWNED[self.name] = (shm, pid)
         weakref.finalize(self, _free, shm, [array], pid).atexit = False
+        _OWNED[self.name] = (shm, pid, owner)
+        if not _ATEXIT:
+            atexit.register(_unlink_all)
+            _ATEXIT = True
 
     @property
     def linked(self):
@@ -292,7 +320,7 @@ class SharedArrays:
     the data out (`read`).
     """
 
-    def __init__(self, threshold, track=True):
+    def __init__(self, threshold, track=True, owner=None):
         """
         Parameters
         ----------
@@ -302,9 +330,13 @@ class SharedArrays:
         track : bool
             Let python's resource tracker follow the segments. Only
             effective on python >= 3.13; the worker passes False.
+        owner : object
+            Token of the session: only its segments are sent by
+            reference.
         """
         self.threshold = threshold
         self.track = track
+        self.owner = owner
         self.segments = []
         # Owned segments sent by reference, kept alive until `release`
         self.borrowed = []
@@ -378,7 +410,10 @@ class SharedArrays:
         # A `ShmArray` pointing into the owned segment that holds
         # `array`, or None.
         segment = _segment_of(array)
-        if segment is None or not segment.linked:
+        if (
+            segment is None or segment.owner is not self.owner
+            or not segment.linked
+        ):
             return None
         if array.flags.c_contiguous:
             order = "C"
@@ -386,10 +421,11 @@ class SharedArrays:
             order = "F"
         else:
             return None
-        offset = (array.__array_interface__["data"][0]
-                  - segment.__array_interface__["data"][0])
-        if offset < 0 or offset + array.nbytes > segment.nbytes:
+        delta = (array.__array_interface__["data"][0]
+                 - segment.__array_interface__["data"][0])
+        if delta < 0 or delta + array.nbytes > segment.nbytes:
             return None
+        offset = segment.offset + delta
         self.borrowed.append(segment)
         return ShmArray(segment.name, array.dtype, array.shape, order, offset)
 
@@ -408,13 +444,16 @@ class SharedArrays:
         for shm in segments:
             try:
                 shm.close()
-                if shm.name not in keep:
-                    shm.unlink()
             except (OSError, BufferError):
                 pass
+            if shm.name not in keep:
+                try:
+                    shm.unlink()
+                except OSError:
+                    pass
 
     @staticmethod
-    def attach(ref):
+    def attach(ref, owner=None):
         """
         Take over the segment of a `ShmArray` (client).
 
@@ -422,6 +461,8 @@ class SharedArrays:
         ----------
         ref : ShmArray
             Description of the array and its segment.
+        owner : object
+            Token of the session that takes it over.
 
         Returns
         -------
@@ -433,7 +474,7 @@ class SharedArrays:
         np = import_numpy("client")
         shm = _open(ref.name)
         try:
-            segment = SharedSegment(shm, ref)
+            segment = SharedSegment(shm, ref, owner)
         except BaseException:
             try:
                 shm.close()
@@ -542,7 +583,7 @@ def matlab_to_numpy(obj):
     return array.astype(dtype, copy=False)
 
 
-# (class, complex, order, dtype) -> whether the constructor copies
+# (class, complex, order, ndim, dtype) -> whether the constructor copies
 _COPIES = {}
 
 
@@ -550,9 +591,10 @@ def _copies(cls, kwargs, array):
     """Whether `cls(array, **kwargs)` copies the data (probed once)."""
     np = import_numpy()
     order = "F" if array.flags.f_contiguous else "C"
-    key = (cls, bool(kwargs), order, array.dtype.str)
+    key = (cls, bool(kwargs), order, array.ndim, array.dtype.str)
     if key not in _COPIES:
-        probe = np.zeros((2, 2), array.dtype, order=order)
+        shape = (2,) * max(array.ndim, 1)
+        probe = np.zeros(shape, array.dtype, order=order)
         try:
             obj = cls(probe, **kwargs)
             probe[...] = 1
