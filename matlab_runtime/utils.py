@@ -928,10 +928,11 @@ def iter_installations(prefix=None):
     folders). Locations are searched in this order:
 
     1. `prefix` if provided; otherwise `$MATLAB_RUNTIME_PATH` if set;
-       otherwise the default prefix (`guess_prefix()`).
+       otherwise the default prefixes: per-user (`user_prefix()`), then
+       system-wide (`guess_prefix()`).
     2. `$MATLAB_PATH`, if set.
-    3. Standard locations (`CANDIDATE_LOCATIONS_BY_OS`, and the
-       per-user prefix `user_prefix()` right after the system-wide one).
+    3. Standard locations: the per-user prefix (`user_prefix()`), then
+       `CANDIDATE_LOCATIONS_BY_OS`.
     4. The installation that contains the `matlab` executable on the PATH.
 
     Installations found in several locations are only yielded once,
@@ -957,23 +958,25 @@ def iter_installations(prefix=None):
                 seen.add(key)
                 yield installation
 
-    # 1. prefix / MATLAB_RUNTIME_PATH / default prefix
+    # 1. prefix / MATLAB_RUNTIME_PATH / default prefixes (user first, so
+    #    that a user's own copy wins over a system-wide copy on ties)
     if prefix is not None:
-        root, source = prefix, "prefix"
+        roots = [(prefix, "prefix")]
     elif os.environ.get("MATLAB_RUNTIME_PATH", ""):
-        root, source = os.environ["MATLAB_RUNTIME_PATH"], "MATLAB_RUNTIME_PATH"
+        roots = [(os.environ["MATLAB_RUNTIME_PATH"], "MATLAB_RUNTIME_PATH")]
     else:
-        root, source = guess_prefix(), "prefix"
-    yield from unseen(_scan_root(op.normpath(root), source))
+        roots = [(user_prefix(), "prefix"), (guess_prefix(), "prefix")]
+    for root, source in roots:
+        yield from unseen(_scan_root(op.normpath(root), source))
 
     # 2. MATLAB_PATH
     if os.environ.get("MATLAB_PATH", ""):
         root = op.normpath(os.environ["MATLAB_PATH"])
         yield from unseen(_scan_root(root, "MATLAB_PATH"))
 
-    # 3. Standard locations (system-wide, then per-user)
-    templates = list(CANDIDATE_LOCATIONS_BY_OS.get(guess_arch()[:3], []))
-    templates.insert(1, op.join(user_prefix(), "{release}"))
+    # 3. Standard locations (per-user, then system-wide)
+    templates = [op.join(user_prefix(), "{release}")]
+    templates += CANDIDATE_LOCATIONS_BY_OS.get(guess_arch()[:3], [])
     for template in templates:
         for path in _glob_location(template):
             release = installation_release(path)

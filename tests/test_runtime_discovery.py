@@ -545,16 +545,28 @@ def test_mpython_install_error(missing, capsys):
     assert not missing["calls"]
 
 
-def test_user_prefix_is_searched(env):
-    # Searched after the system-wide runtime prefix, before full MATLABs
-    system = fake_runtime(env["standard"] / "MATLAB_Runtime" / "R2024b",
-                          "R2024b")
+def test_user_prefix_wins_ties(env):
+    # The per-user prefix is searched before the system-wide one
+    default = fake_runtime(env["prefix"] / "R2024b", "R2024b")
+    standard = fake_runtime(env["standard"] / "MATLAB_Runtime" / "R2024b",
+                            "R2024b")
     user = fake_runtime(env["user"] / "R2024b", "R2024b")
-    fake_runtime(env["user"] / "R2025a", "R2025a")
     installs = list(iter_installations())
-    assert [(x.release, x.path) for x in installs] == [
-        ("R2024b", system), ("R2024b", user),
-        ("R2025a", str(env["user"] / "R2025a")),
+    assert [(x.path, x.source) for x in installs] == [
+        (user, "prefix"), (default, "prefix"), (standard, "standard"),
     ]
-    assert resolve_runtime() == ("R2025a", str(env["user"] / "R2025a"))
-    assert find_runtime("R2024b") == system
+    assert find_runtime("R2024b") == user
+    # The most recent release still wins, wherever it is
+    newer = fake_runtime(env["prefix"] / "R2025a", "R2025a")
+    assert resolve_runtime() == ("R2025a", newer)
+
+
+def test_user_prefix_before_standard_locations(env, monkeypatch):
+    # Also with an explicit prefix (or MATLAB_RUNTIME_PATH)
+    standard = fake_runtime(env["standard"] / "MATLAB_Runtime" / "R2024b",
+                            "R2024b")
+    user = fake_runtime(env["user"] / "R2024b", "R2024b")
+    installs = list(iter_installations(str(env["tmp"] / "elsewhere")))
+    assert [(x.path, x.source) for x in installs] == [
+        (user, "standard"), (standard, "standard"),
+    ]
