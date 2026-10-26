@@ -121,6 +121,7 @@ def init(
     prefix=None,
     auto_answer=False,
     *,
+    default_scope=None,
     executable=None,
     use_mpython=None,
     start_timeout=600,
@@ -146,6 +147,9 @@ def init(
     auto_answer : bool
         Default answer to all questions.
         **This entails accepting the MATLAB Runtime license agreement.**
+    default_scope : {"user", "system", "custom"}, default="system"
+        Install location chosen when `prefix` is not provided and the
+        user just presses Enter (see `matlab_runtime.install`).
 
     Other Parameters
     ----------------
@@ -212,7 +216,8 @@ def init(
         if path is None:
             # Install here, where the user can answer questions
             from ..impl import install
-            install(version, prefix, auto_answer)
+            install(version, prefix, auto_answer,
+                    default_scope=default_scope)
             version, path = resolve_runtime(version, prefix, **options)
     session = _session(
         executable=executable,

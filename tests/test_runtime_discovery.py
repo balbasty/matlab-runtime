@@ -78,6 +78,7 @@ def env(tmp_path, monkeypatch):
     standard = tmp_path / "standard"
     monkeypatch.setattr(utils, "guess_arch", lambda: "glnxa64")
     monkeypatch.setattr(utils, "guess_prefix", lambda: str(default_prefix))
+    monkeypatch.setattr(utils, "user_prefix", lambda: str(tmp_path / "user"))
     monkeypatch.setattr(utils, "CANDIDATE_LOCATIONS_BY_OS", {"gln": [
         op.join(str(standard), "MATLAB_Runtime", "{release}"),
         op.join(str(standard), "MATLAB_{release}.app"),
@@ -86,7 +87,8 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(utils, "SUPPORTED_PYTHON_VERSIONS", dict(SUPPORTED))
     monkeypatch.delenv("MATLAB_RUNTIME_PATH", raising=False)
     monkeypatch.delenv("MATLAB_PATH", raising=False)
-    return dict(tmp=tmp_path, prefix=default_prefix, standard=standard)
+    return dict(tmp=tmp_path, prefix=default_prefix, standard=standard,
+                user=tmp_path / "user")
 
 
 # --- releases -----------------------------------------------------------
@@ -541,3 +543,18 @@ def test_mpython_install_error(missing, capsys):
     assert "Traceback" not in err
     assert missing["installed"] == ["R2025b"]
     assert not missing["calls"]
+
+
+def test_user_prefix_is_searched(env):
+    # Searched after the system-wide runtime prefix, before full MATLABs
+    system = fake_runtime(env["standard"] / "MATLAB_Runtime" / "R2024b",
+                          "R2024b")
+    user = fake_runtime(env["user"] / "R2024b", "R2024b")
+    fake_runtime(env["user"] / "R2025a", "R2025a")
+    installs = list(iter_installations())
+    assert [(x.release, x.path) for x in installs] == [
+        ("R2024b", system), ("R2024b", user),
+        ("R2025a", str(env["user"] / "R2025a")),
+    ]
+    assert resolve_runtime() == ("R2025a", str(env["user"] / "R2025a"))
+    assert find_runtime("R2024b") == system

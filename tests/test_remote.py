@@ -823,6 +823,7 @@ def isolated_runtimes(tmp_path, monkeypatch):
     other.mkdir()
     pyver = f"{sys.version_info.major}.{sys.version_info.minor}"
     monkeypatch.setattr(utils, "guess_prefix", lambda: str(prefix))
+    monkeypatch.setattr(utils, "user_prefix", lambda: str(tmp_path / "user"))
     monkeypatch.setattr(utils, "CANDIDATE_LOCATIONS_BY_OS", {
         key: [str(other / "{release}")] for key in ("mac", "gln", "win")
     })
@@ -918,13 +919,13 @@ def test_init_install_if_missing(fake_env, isolated_runtimes, monkeypatch):
     from matlab_runtime import impl
     installed = []
 
-    def install(release, prefix, auto_answer):
-        installed.append((release, prefix, auto_answer))
+    def install(release, prefix, auto_answer, default_scope=None):
+        installed.append((release, prefix, auto_answer, default_scope))
         fake_runtime(isolated_runtimes["prefix"] / release, release)
     monkeypatch.setattr(impl, "install", install)
     remote.init("R2024b", install_if_missing=True, auto_answer=True,
-                use_mpython=False)
-    assert installed == [("R2024b", None, True)]
+                default_scope="user", use_mpython=False)
+    assert installed == [("R2024b", None, True, "user")]
     pkg = remote.import_deployed("fake_package")
     root = str(isolated_runtimes["prefix"] / "R2024b")
     assert pkg.init_kwargs() == {"version": "R2024b", "prefix": root}

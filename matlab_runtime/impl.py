@@ -6,6 +6,7 @@ __all__ = [
     "init_runtime",
     "terminate_runtime",
     "guess_prefix",
+    "user_prefix",
     "guess_arch",
 ]
 import atexit
@@ -20,9 +21,11 @@ import warnings
 import weakref
 
 from .utils import (
+    askprefix,
     askuser,
     guess_arch,
     guess_prefix,
+    user_prefix,
     guess_installer,
     guess_release,
     find_runtime,
@@ -54,6 +57,7 @@ def install(
     patch=None,
     products=None,
     ctf=None,
+    default_scope=None,
 ):
     """
     Install the matlab runtime.
@@ -71,10 +75,17 @@ def install(
     version : [list of] str, default="latest"
         MATLAB version, such as 'latest' or 'R2022b' or '9.13'.
     prefix : str, optional
-        Install location. Default:
-        * Windows:  C:\\Program Files\\MATLAB\\MATLAB Runtime\\
-        * Linux:    /usr/local/MATLAB/MATLAB_Runtime
-        * MacOS:    /Applications/MATLAB/MATLAB_Runtime
+        Install location. Default: `$MATLAB_RUNTIME_PATH` if set, else
+        the user is asked to choose (see `utils.askprefix`) between:
+        * "user" (`user_prefix()`, no admin rights needed):
+            * Windows:  %LOCALAPPDATA%\\Programs\\MATLAB\\MATLAB Runtime
+            * Linux:    ~/.local/share/MATLAB/MATLAB_Runtime
+            * MacOS:    ~/Applications/MATLAB/MATLAB_Runtime
+        * "system" (`guess_prefix()`):
+            * Windows:  C:\\Program Files\\MATLAB\\MATLAB Runtime\\
+            * Linux:    /usr/local/MATLAB/MATLAB_Runtime
+            * MacOS:    /Applications/MATLAB/MATLAB_Runtime
+        * "custom": a folder that the user types.
     default_answer : bool
         Default answer to all questions.
     patch : bool
@@ -87,6 +98,10 @@ def install(
     ctf : [list of] str, optional
         Only install the products required by these compiled CTF
         archives. Combined (union) with `products`.
+    default_scope : {"user", "system", "custom"}, default="system"
+        Installation location chosen when `prefix` is not provided and
+        the user just presses Enter (or when `auto_answer` is set).
+        Applications can use it to choose the default that suits them.
 
     Raises
     ------
@@ -103,6 +118,9 @@ def install(
     """
     # --- iterate if multiple versions  --------------------------------
     if isinstance(version, (list, tuple, set)):
+        if prefix is None:
+            # Ask for the location once
+            prefix = _default_prefix(default_scope, auto_answer)
         for a_version in version:
             install(
                 a_version, prefix, auto_answer, patch,
@@ -128,7 +146,7 @@ def install(
     proc, log = None, ""  # installer outputs, for diagnostics
 
     if prefix is None:
-        prefix = guess_prefix()
+        prefix = _default_prefix(default_scope, auto_answer)
     prefix = op.realpath(op.abspath(prefix))
 
     # --- check already exists -----------------------------------------
@@ -302,7 +320,8 @@ def install(
     return
 
 
-def uninstall(version=None, prefix=None, auto_answer=False):
+def uninstall(version=None, prefix=None, auto_answer=False,
+              default_scope=None):
     """
     Uninstall the matlab runtime.
 
@@ -312,15 +331,18 @@ def uninstall(version=None, prefix=None, auto_answer=False):
         MATLAB version, such as 'latest' or 'R2022b' or '9.13'.
         If 'all', uninstall all installed versions.
     prefix : str, optional
-        Install location. Default:
-        * Windows:  C:\\Program Files\\MATLAB\\MATLAB Runtime\\
-        * Linux:    /usr/local/MATLAB/MATLAB_Runtime
-        * MacOS:    /Applications/MATLAB/MATLAB_Runtime
+        Install location. Default: `$MATLAB_RUNTIME_PATH` if set, else
+        the user is asked to choose (see `install`).
     auto_answer : bool
         Default answer to all questions.
+    default_scope : {"user", "system", "custom"}, default="system"
+        Location chosen when `prefix` is not provided and the user just
+        presses Enter (or when `auto_answer` is set).
     """
     # --- iterate if multiple versions  --------------------------------
     if isinstance(version, (list, tuple, set)):
+        if prefix is None:
+            prefix = _default_prefix(default_scope, auto_answer)
         for a_version in version:
             try:
                 uninstall(a_version, prefix, auto_answer)
@@ -336,7 +358,7 @@ def uninstall(version=None, prefix=None, auto_answer=False):
         version = matlab_release(version)
 
     if prefix is None:
-        prefix = guess_prefix()
+        prefix = _default_prefix(default_scope, auto_answer)
 
     if version.lower() == "all":
         rmdir = prefix
@@ -362,6 +384,16 @@ def uninstall(version=None, prefix=None, auto_answer=False):
         shutil.rmtree(rmdir)
 
     print("Runtime(s) succesfully uninstalled from:", rmdir)
+
+
+def _default_prefix(default_scope=None, auto_answer=False):
+    """
+    Prefix used when none is provided: `$MATLAB_RUNTIME_PATH` if set,
+    else the user's choice (see `utils.askprefix`).
+    """
+    if os.environ.get("MATLAB_RUNTIME_PATH", ""):
+        return guess_prefix()
+    return askprefix(default_scope, auto_answer)
 
 
 _DEPLOYED_MODULES = {}
@@ -444,6 +476,7 @@ def init(
     prefix=None,
     auto_answer=False,
     mode=None,
+    default_scope=None,
 ):
     """
     Set current environment so that the MATLAB Python SDK is properly
@@ -462,11 +495,10 @@ def init(
         If target version is missing, run installer.
     prefix : str, optional
         Location searched first (an installation prefix or a release
-        folder), and install location. Default:
-        * `$MATLAB_RUNTIME_PATH`, if set; else
-        * Windows:  C:\\Program Files\\MATLAB\\MATLAB Runtime\\
-        * Linux:    /usr/local/MATLAB/MATLAB_Runtime
-        * MacOS:    /Applications/MATLAB/MATLAB_Runtime
+        folder), and install location. Default: `$MATLAB_RUNTIME_PATH`,
+        if set; else the system-wide prefix (`guess_prefix()`) is
+        searched first, and the user is asked where to install
+        (see `install`).
     auto_answer : bool
         Default answer to all questions.
         **This entails accepting the MATLAB Runtime license agreement.**
@@ -488,6 +520,10 @@ def init(
         environment variable `MATLAB_RUNTIME_MODE`, else "auto".
         The mode is fixed for the process by the first call to `init`,
         `import_deployed` or `init_runtime`.
+    default_scope : {"user", "system", "custom"}, default="system"
+        Install location chosen when `prefix` is not provided and the
+        user just presses Enter (or when `auto_answer` is set)
+        (see `install`).
 
     Raises
     ------
@@ -511,7 +547,8 @@ def init(
     # --- remote mode  -------------------------------------------------
     if _use_mode(mode) == "remote":
         from . import remote
-        return remote.init(version, install_if_missing, prefix, auto_answer)
+        return remote.init(version, install_if_missing, prefix, auto_answer,
+                           default_scope=default_scope)
 
     # --- prepare  -----------------------------------------------------
     arch = guess_arch()
@@ -541,7 +578,7 @@ def init(
 
     # --- install version  ---------------------------------------------
     if not path:
-        install(release, prefix, auto_answer)
+        install(release, prefix, auto_answer, default_scope=default_scope)
         release, path = resolve_runtime(release, prefix)
 
     if python_supported(release, python_version) is None:

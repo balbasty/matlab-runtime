@@ -36,7 +36,8 @@ pip install matlab-runtime
 ## Command line tool
 
 ```text
-usage: install_matlab_runtime [-h] [-v VERSION ...] [-p PREFIX] [-u] [-y] [-x]
+usage: install_matlab_runtime [-h] [-v VERSION ...] [-p PREFIX]
+                              [-s {user,system,custom}] [-u] [-y] [-x]
                               [-f PRODUCT ...] [-c FILE ...]
 
 Install any matlab runtime in any location.
@@ -49,10 +50,15 @@ options:
                     such as 'latest' or 'R2022b' or '9.13'.
                     Default is 'all' if '--uninstall' else 'latest'.
 
-  -p, --prefix      Installation prefix. Default:
-                    * Windows:  C:\Program Files\MATLAB\MATLAB Runtime\
-                    * Linux:    /usr/local/MATLAB/MATLAB_Runtime
-                    * MacOS:    /Applications/MATLAB/MATLAB_Runtime
+  -p, --prefix      Installation prefix. Default: $MATLAB_RUNTIME_PATH if
+                    set, else ask whether to use the user prefix, the
+                    system prefix or another folder (see below).
+
+  -s, --default-scope
+                    Installation location chosen when '--prefix' is not
+                    provided and the user just presses Enter (or with
+                    '--yes'): 'user', 'system' or 'custom'.
+                    Default: 'system'.
 
   -u, --uninstall   Uninstall this version of the runtime.
                     Use '--version all' to uninstall all versions.
@@ -73,6 +79,40 @@ options:
 
   -c, --ctf         Only install the products required by these compiled
                     CTF archives. Can be combined with '--products'.
+```
+
+### Installation location
+
+When no prefix is provided (and `MATLAB_RUNTIME_PATH` is not set), the
+user is asked where to install the runtime:
+
+```text
+Where should the MATLAB Runtime be installed?
+  [1] user:   /home/me/.local/share/MATLAB/MATLAB_Runtime (no admin rights needed)
+  [2] system: /usr/local/MATLAB/MATLAB_Runtime (may need admin rights)
+  [3] custom: a folder of your choice
+Installation location ([user]/system/custom)
+```
+
+| Scope | Windows | Linux | MacOS |
+|-------|---------|-------|-------|
+| `user` (`user_prefix()`) | `%LOCALAPPDATA%\Programs\MATLAB\MATLAB Runtime` | `$XDG_DATA_HOME/MATLAB/MATLAB_Runtime` (default `~/.local/share/...`) | `~/Applications/MATLAB/MATLAB_Runtime` |
+| `system` (`guess_prefix()`) | `C:\Program Files\MATLAB\MATLAB Runtime` | `/usr/local/MATLAB/MATLAB_Runtime` | `/Applications/MATLAB/MATLAB_Runtime` |
+
+The `user` prefix is the per-user counterpart of the `system` prefix
+defined by each platform: the per-user "Program Files" folder
+(`FOLDERID_UserProgramFiles`) on Windows, the
+[XDG](https://specifications.freedesktop.org/basedir-spec/latest/) data
+folder on Linux, and the per-user "Applications" folder on MacOS.
+Runtimes installed there are found by `init()`, `import_deployed()` and
+`mpython` without further configuration.
+
+Pressing Enter selects the default scope, which applications can choose
+with `--default-scope` (or `default_scope=` in `install()`, `uninstall()`
+and `init()`). With `--yes`, the default scope is used without asking.
+
+```shell
+install_matlab_runtime -v R2024b --default-scope user
 ```
 
 Install only the products required by a compiled package:
@@ -176,6 +216,21 @@ def guess_prefix():
     """
     ...
 
+def user_prefix():
+    """
+    Per-user MATLAB Runtime installation prefix (no admin rights needed).
+
+    * Windows:  %LOCALAPPDATA%\\Programs\\MATLAB\\MATLAB Runtime
+    * Linux:    $XDG_DATA_HOME/MATLAB/MATLAB_Runtime
+                (default: ~/.local/share/MATLAB/MATLAB_Runtime)
+    * MacOS:    ~/Applications/MATLAB/MATLAB_Runtime
+
+    Returns
+    -------
+    prefix : str
+    """
+    ...
+
 def install(
     version=None,
     prefix=None,
@@ -183,6 +238,7 @@ def install(
     patch=None,
     products=None,
     ctf=None,
+    default_scope=None,
 ):
     """
     Install the matlab runtime.
@@ -200,10 +256,9 @@ def install(
     version : [list of] str, default="latest"
         MATLAB version, such as 'latest' or 'R2022b' or '9.13'.
     prefix : str, optional
-        Install location. Default:
-        * Windows:  C:\\Program Files\\MATLAB\\MATLAB Runtime\\
-        * Linux:    /usr/local/MATLAB/MATLAB_Runtime
-        * MacOS:    /Applications/MATLAB/MATLAB_Runtime
+        Install location. Default: `$MATLAB_RUNTIME_PATH` if set, else
+        the user is asked to choose between "user" (`user_prefix()`),
+        "system" (`guess_prefix()`) and "custom" (a folder they type).
     default_answer : bool
         Default answer to all questions.
         **This entails accepting the MATLAB Runtime license agreement.**
@@ -217,6 +272,9 @@ def install(
     ctf : [list of] str, optional
         Only install the products required by these compiled CTF
         archives. Combined (union) with `products`.
+    default_scope : {"user", "system", "custom"}, default="system"
+        Installation location chosen when `prefix` is not provided and
+        the user just presses Enter (or when `auto_answer` is set).
 
     Raises
     ------
@@ -233,7 +291,8 @@ def install(
     """
     ...
 
-def uninstall(version=None, prefix=None, auto_answer=False):
+def uninstall(version=None, prefix=None, auto_answer=False,
+              default_scope=None):
     """
     Uninstall the matlab runtime.
 
@@ -243,12 +302,13 @@ def uninstall(version=None, prefix=None, auto_answer=False):
         MATLAB version, such as 'latest' or 'R2022b' or '9.13'.
         If 'all', uninstall all installed versions.
     prefix : str, optional
-        Install location. Default:
-        * Windows:  C:\\Program Files\\MATLAB\\MATLAB Runtime\\
-        * Linux:    /usr/local/MATLAB/MATLAB_Runtime
-        * MacOS:    /Applications/MATLAB/MATLAB_Runtime
+        Install location. Default: `$MATLAB_RUNTIME_PATH` if set, else
+        the user is asked to choose (see `install`).
     auto_answer : bool
         Default answer to all questions.
+    default_scope : {"user", "system", "custom"}, default="system"
+        Location chosen when `prefix` is not provided and the user just
+        presses Enter (or when `auto_answer` is set).
     """
     ...
 
@@ -258,6 +318,7 @@ def init(
     prefix=None,
     auto_answer=False,
     mode=None,
+    default_scope=None,
 ):
     """
     Set current environment so that the MATLAB Python SDK is properly
@@ -276,11 +337,10 @@ def init(
         If target version is missing, run installer.
     prefix : str, optional
         Location searched first (an installation prefix or a release
-        folder), and install location. Default:
-        * `$MATLAB_RUNTIME_PATH`, if set; else
-        * Windows:  C:\\Program Files\\MATLAB\\MATLAB Runtime\\
-        * Linux:    /usr/local/MATLAB/MATLAB_Runtime
-        * MacOS:    /Applications/MATLAB/MATLAB_Runtime
+        folder), and install location. Default: `$MATLAB_RUNTIME_PATH`,
+        if set; else the system-wide prefix (`guess_prefix()`) is
+        searched first, and the user is asked where to install
+        (see `install`).
     auto_answer : bool
         Default answer to all questions.
         **This entails accepting the MATLAB Runtime license agreement.**
@@ -289,6 +349,9 @@ def init(
         already used in this process, else `$MATLAB_RUNTIME_MODE`,
         else "auto" ("remote" on macOS unless running under mwpython,
         "inprocess" elsewhere).
+    default_scope : {"user", "system", "custom"}, default="system"
+        Install location chosen when `prefix` is not provided and the
+        user just presses Enter (or when `auto_answer` is set).
 
     Raises
     ------
@@ -338,9 +401,10 @@ searched, in order:
 1. the `prefix` argument if provided, else `$MATLAB_RUNTIME_PATH` if set,
    else the default prefix (see `guess_prefix()`);
 2. `$MATLAB_PATH`, if set;
-3. standard locations of the MATLAB Runtime **and of full MATLAB
-   installations**, e.g. `/usr/local/MATLAB/MATLAB_Runtime/*`,
-   `/usr/local/MATLAB/*`, `/Applications/MATLAB_*.app`,
+3. standard locations of the MATLAB Runtime (system-wide, then per-user,
+   see `user_prefix()`) **and of full MATLAB installations**, e.g.
+   `/usr/local/MATLAB/MATLAB_Runtime/*`,
+   `~/.local/share/MATLAB/MATLAB_Runtime/*`, `/usr/local/MATLAB/*`, `/Applications/MATLAB_*.app`,
    `C:\Program Files\MATLAB\*`;
 4. the installation that contains the `matlab` executable found on the
    `PATH`.
