@@ -8,6 +8,7 @@ import platform
 import re
 import shutil
 import stat
+import subprocess
 import sys
 import tempfile
 import zipfile
@@ -726,6 +727,57 @@ def macos_version():
     ver = platform.platform().split("-")[1]
     ver = tuple(map(int, ver.split(".")))
     return ver
+
+
+QUARANTINE = "com.apple.quarantine"
+
+
+def is_quarantined(path):
+    """Whether macOS' quarantine attribute is set on `path`."""
+    proc = subprocess.run(["xattr", "-p", QUARANTINE, path],
+                          capture_output=True)
+    return proc.returncode == 0
+
+
+def unquarantine(path, probe=None):
+    """
+    Remove macOS' quarantine attribute from `path` and its content.
+
+    Gatekeeper only checks files that have the quarantine attribute.
+    It is set by the application that downloaded them (e.g., a web
+    browser), or on all the files written by a sandboxed process, but
+    not by `urllib`. Nothing is done if `probe` (default: `path`) does
+    not have it.
+
+    The files belong to the user, so removing the attribute should not
+    require sudo. Sudo is only used if removing it without sudo fails.
+
+    Parameters
+    ----------
+    path : str
+        File or folder (processed recursively).
+    probe : str, optional
+        File whose attribute is checked. Default: `path`.
+
+    Returns
+    -------
+    found : bool
+        Whether `probe` had the quarantine attribute.
+    """
+    probe = path if probe is None else probe
+    if not is_quarantined(probe):
+        return False
+    call = ["xattr", "-r", "-d", QUARANTINE, path]
+    # xattr may fail on files that do not have the attribute, so its
+    # return code is not reliable: check the attribute instead.
+    subprocess.run(call, capture_output=True)
+    if is_quarantined(probe):
+        print(
+            "Removing the quarantine attribute from the MATLAB installer "
+            "requires sudo:"
+        )
+        subprocess.run(["sudo"] + call)
+    return True
 
 
 # Standard installation locations. `{release}` is a glob placeholder: it
