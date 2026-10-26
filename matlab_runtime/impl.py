@@ -46,6 +46,7 @@ from .utils import (
     installer_products,
     make_installer_input,
     resolve_products,
+    unquarantine,
     ZipFileWithExecPerm,
 )
 
@@ -231,13 +232,8 @@ def install(
         print("License agreed.")
 
         if arch[:3] == "mac" and macos_version() > (10, 14):
-            print(
-                "Running the MATLAB installer requires signing off its "
-                "binaries, which requires sudo:"
-            )
-            subprocess.run([
-                "sudo", "xattr", "-r", "-d", "com.apple.quarantine", tmpdir
-            ])
+            # Only needed if the installer is quarantined (see unquarantine)
+            unquarantine(tmpdir, probe=installer)
 
         if names:
             # Product selection is only possible through an input file
