@@ -30,35 +30,46 @@ def answers(monkeypatch, *replies):
 # --- user_prefix --------------------------------------------------------
 
 
-def test_user_prefix_linux(monkeypatch):
+def set_home(monkeypatch, home):
+    # `~` is $HOME on unix, but %USERPROFILE% on Windows
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+
+
+def test_user_prefix_linux(monkeypatch, tmp_path):
     monkeypatch.setattr(utils, "guess_arch", lambda: "glnxa64")
-    monkeypatch.setenv("HOME", "/home/me")
+    set_home(monkeypatch, tmp_path / "me")
+    default = op.join(str(tmp_path / "me"), ".local", "share", "MATLAB",
+                      "MATLAB_Runtime")
     monkeypatch.delenv("XDG_DATA_HOME", raising=False)
-    assert user_prefix() == "/home/me/.local/share/MATLAB/MATLAB_Runtime"
-    monkeypatch.setenv("XDG_DATA_HOME", "/data")
-    assert user_prefix() == "/data/MATLAB/MATLAB_Runtime"
+    assert user_prefix() == default
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    assert user_prefix() == op.join(str(tmp_path / "data"), "MATLAB",
+                                    "MATLAB_Runtime")
     # Relative paths are invalid and ignored (XDG specification)
     monkeypatch.setenv("XDG_DATA_HOME", "data")
-    assert user_prefix() == "/home/me/.local/share/MATLAB/MATLAB_Runtime"
+    assert user_prefix() == default
 
 
-def test_user_prefix_mac(monkeypatch):
+def test_user_prefix_mac(monkeypatch, tmp_path):
     monkeypatch.setattr(utils, "guess_arch", lambda: "maca64")
-    monkeypatch.setenv("HOME", "/Users/me")
-    assert user_prefix() == "/Users/me/Applications/MATLAB/MATLAB_Runtime"
-
-
-def test_user_prefix_windows(monkeypatch):
-    monkeypatch.setattr(utils, "guess_arch", lambda: "win64")
-    monkeypatch.setenv("LOCALAPPDATA", "/appdata")
+    set_home(monkeypatch, tmp_path / "me")
     assert user_prefix() == op.join(
-        "/appdata", "Programs", "MATLAB", "MATLAB Runtime"
+        str(tmp_path / "me"), "Applications", "MATLAB", "MATLAB_Runtime"
+    )
+
+
+def test_user_prefix_windows(monkeypatch, tmp_path):
+    monkeypatch.setattr(utils, "guess_arch", lambda: "win64")
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "appdata"))
+    assert user_prefix() == op.join(
+        str(tmp_path / "appdata"), "Programs", "MATLAB", "MATLAB Runtime"
     )
     monkeypatch.delenv("LOCALAPPDATA")
-    monkeypatch.setenv("HOME", "/me")
-    monkeypatch.setenv("USERPROFILE", "/me")
+    set_home(monkeypatch, tmp_path / "me")
     assert user_prefix() == op.join(
-        "/me", "AppData", "Local", "Programs", "MATLAB", "MATLAB Runtime"
+        str(tmp_path / "me"), "AppData", "Local", "Programs", "MATLAB",
+        "MATLAB Runtime"
     )
 
 
