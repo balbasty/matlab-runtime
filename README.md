@@ -105,7 +105,8 @@ defined by each platform: the per-user "Program Files" folder
 [XDG](https://specifications.freedesktop.org/basedir-spec/latest/) data
 folder on Linux, and the per-user "Applications" folder on MacOS.
 Runtimes installed there are found by `init()`, `import_deployed()` and
-`mpython` without further configuration.
+`mpython` without further configuration, and are preferred over a
+system-wide copy of the same release.
 
 Pressing Enter selects the default scope, which applications can choose
 with `--default-scope` (or `default_scope=` in `install()`, `uninstall()`
@@ -399,12 +400,13 @@ way (`matlab_runtime.utils.resolve_runtime`). The following locations are
 searched, in order:
 
 1. the `prefix` argument if provided, else `$MATLAB_RUNTIME_PATH` if set,
-   else the default prefix (see `guess_prefix()`);
+   else the default prefixes: per-user (see `user_prefix()`), then
+   system-wide (see `guess_prefix()`);
 2. `$MATLAB_PATH`, if set;
-3. standard locations of the MATLAB Runtime (system-wide, then per-user,
-   see `user_prefix()`) **and of full MATLAB installations**, e.g.
-   `/usr/local/MATLAB/MATLAB_Runtime/*`,
-   `~/.local/share/MATLAB/MATLAB_Runtime/*`, `/usr/local/MATLAB/*`, `/Applications/MATLAB_*.app`,
+3. standard locations of the MATLAB Runtime (per-user, then system-wide)
+   **and of full MATLAB installations**, e.g.
+   `~/.local/share/MATLAB/MATLAB_Runtime/*`,
+   `/usr/local/MATLAB/MATLAB_Runtime/*`, `/usr/local/MATLAB/*`, `/Applications/MATLAB_*.app`,
    `C:\Program Files\MATLAB\*`;
 4. the installation that contains the `matlab` executable found on the
    `PATH`.
@@ -422,7 +424,8 @@ folder names.
   support the running Python (according to
   `utils.SUPPORTED_PYTHON_VERSIONS`; releases missing from that table
   are accepted, with a warning in `init()`). On ties, the location found
-  first (_e.g._, `prefix`) wins. If `prefix` (or `$MATLAB_RUNTIME_PATH`)
+  first (_e.g._, `prefix`, or the per-user prefix over the system-wide
+  one) wins. If `prefix` (or `$MATLAB_RUNTIME_PATH`)
   is a release folder, that installation is used, even if a more recent
   release is installed elsewhere.
 * `import_deployed()` (without a prior `init()`) uses the release the
