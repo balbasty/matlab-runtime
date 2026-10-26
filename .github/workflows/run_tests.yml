@@ -14,7 +14,10 @@ on:
         required: false
         default: ''
         type: string
+  # Pushes to other branches are tested through their pull request
   push:
+    branches:
+      - main
     paths:
       - tests/**
       - matlab_runtime/**
