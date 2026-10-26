@@ -878,7 +878,8 @@ def iter_installations(prefix=None):
     1. `prefix` if provided; otherwise `$MATLAB_RUNTIME_PATH` if set;
        otherwise the default prefix (`guess_prefix()`).
     2. `$MATLAB_PATH`, if set.
-    3. Standard locations (`CANDIDATE_LOCATIONS_BY_OS`).
+    3. Standard locations (`CANDIDATE_LOCATIONS_BY_OS`, and the
+       per-user prefix `user_prefix()` right after the system-wide one).
     4. The installation that contains the `matlab` executable on the PATH.
 
     Installations found in several locations are only yielded once,
@@ -918,8 +919,10 @@ def iter_installations(prefix=None):
         root = op.normpath(os.environ["MATLAB_PATH"])
         yield from unseen(_scan_root(root, "MATLAB_PATH"))
 
-    # 3. Standard locations
-    for template in CANDIDATE_LOCATIONS_BY_OS.get(guess_arch()[:3], []):
+    # 3. Standard locations (system-wide, then per-user)
+    templates = list(CANDIDATE_LOCATIONS_BY_OS.get(guess_arch()[:3], []))
+    templates.insert(1, op.join(user_prefix(), "{release}"))
+    for template in templates:
         for path in _glob_location(template):
             release = installation_release(path)
             if release:
@@ -1238,6 +1241,112 @@ def guess_prefix():
     if arch[:3] == "mac":
         return "/Applications/MATLAB/MATLAB_Runtime"
     assert False
+
+
+def user_prefix():
+    """
+    Per-user MATLAB Runtime installation prefix (no admin rights needed).
+
+    It is the per-user counterpart of the system-wide prefix
+    (`guess_prefix()`), following each platform's convention:
+
+    * Windows:  %LOCALAPPDATA%\\Programs\\MATLAB\\MATLAB Runtime
+                (`FOLDERID_UserProgramFiles`, the per-user "Program Files")
+    * Linux:    $XDG_DATA_HOME/MATLAB/MATLAB_Runtime
+                (default: ~/.local/share/MATLAB/MATLAB_Runtime,
+                see the XDG Base Directory Specification)
+    * MacOS:    ~/Applications/MATLAB/MATLAB_Runtime
+                (the per-user "Applications" folder)
+
+    Returns
+    -------
+    prefix : str
+    """
+    arch = guess_arch()
+    if arch[:3] == "win":
+        root = os.environ.get("LOCALAPPDATA", "")
+        if not op.isabs(root):
+            root = op.join(op.expanduser("~"), "AppData", "Local")
+        return op.join(root, "Programs", "MATLAB", "MATLAB Runtime")
+    if arch[:3] == "gln":
+        # The XDG specification says to ignore relative paths
+        root = os.environ.get("XDG_DATA_HOME", "")
+        if not op.isabs(root):
+            root = op.join(op.expanduser("~"), ".local", "share")
+        return op.join(root, "MATLAB", "MATLAB_Runtime")
+    if arch[:3] == "mac":
+        return op.join(op.expanduser("~"), "Applications", "MATLAB",
+                       "MATLAB_Runtime")
+    assert False
+
+
+PREFIX_SCOPES = ("user", "system", "custom")
+_SCOPE_ALIASES = {
+    "1": "user", "u": "user", "local": "user",
+    "2": "system", "s": "system", "global": "system",
+    "3": "custom", "c": "custom",
+}
+
+
+def askprefix(default="system", auto_answer=False):
+    """
+    Ask the user where to install the MATLAB Runtime.
+
+    The user chooses between the per-user prefix (`user_prefix()`), the
+    system-wide prefix (`guess_prefix()`) and a path of their choice.
+
+    Parameters
+    ----------
+    default : {"user", "system", "custom"}
+        Choice made when the user just presses Enter.
+    auto_answer : bool
+        Do not ask, and use the `default` choice.
+
+    Returns
+    -------
+    prefix : str
+
+    Raises
+    ------
+    ValueError
+        If `default` is not a valid choice, or if it is "custom" and
+        `auto_answer` is set (there is no path to choose).
+    """
+    default = str(default or "system").strip().lower()
+    if default not in PREFIX_SCOPES:
+        raise ValueError(
+            f"Unknown installation scope {default!r}: expected one of "
+            f"{', '.join(map(repr, PREFIX_SCOPES))}."
+        )
+    prefixes = {"user": user_prefix(), "system": guess_prefix()}
+    if auto_answer:
+        if default == "custom":
+            raise ValueError(
+                "A custom installation prefix cannot be chosen without "
+                "asking: provide a prefix instead."
+            )
+        return prefixes[default]
+
+    print("Where should the MATLAB Runtime be installed?")
+    print(f"  [1] user:   {prefixes['user']} (no admin rights needed)")
+    print(f"  [2] system: {prefixes['system']} (may need admin rights)")
+    print("  [3] custom: a folder of your choice")
+    options = "/".join(
+        f"[{scope}]" if scope == default else scope for scope in PREFIX_SCOPES
+    )
+    while True:
+        choice = input(f"Installation location ({options}) ").strip().lower()
+        choice = choice or default
+        choice = _SCOPE_ALIASES.get(choice, choice)
+        if choice in prefixes:
+            return prefixes[choice]
+        if choice == "custom":
+            break
+        print("Please answer 'user', 'system' or 'custom' (or 1, 2, 3).")
+    while True:
+        prefix = input("Installation prefix: ").strip()
+        if prefix:
+            return op.expanduser(prefix)
 
 
 def find_runtime_in_prefix(version, prefix):

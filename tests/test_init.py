@@ -26,6 +26,7 @@ def sdk(tmp_path, monkeypatch):
     monkeypatch.setattr(utils, "guess_arch", lambda: "glnxa64")
     monkeypatch.setattr(impl, "guess_arch", lambda: "glnxa64")
     monkeypatch.setattr(utils, "guess_prefix", lambda: str(prefix))
+    monkeypatch.setattr(utils, "user_prefix", lambda: str(tmp_path / "user"))
     monkeypatch.setattr(utils, "CANDIDATE_LOCATIONS_BY_OS", {"gln": []})
     monkeypatch.setattr(utils.shutil, "which", lambda name: None)
     monkeypatch.delenv("MATLAB_RUNTIME_PATH", raising=False)
@@ -106,8 +107,8 @@ def test_init_python_unknown_warns(sdk, monkeypatch):
 def test_init_install_if_missing(sdk, monkeypatch):
     installed = []
 
-    def install(release, prefix, auto_answer):
-        installed.append(release)
+    def install(release, prefix, auto_answer, default_scope=None):
+        installed.append((release, default_scope))
         fake_runtime(sdk["prefix"] / release, release)
     monkeypatch.setattr(impl, "install", install)
     monkeypatch.setitem(utils.SUPPORTED_PYTHON_VERSIONS, "R2022b",
@@ -115,8 +116,8 @@ def test_init_install_if_missing(sdk, monkeypatch):
     sdk["version"] = "9.13.0"
     with pytest.raises(FileNotFoundError):
         impl.init("R2022b")
-    impl.init("R2022b", install_if_missing=True)
-    assert installed == ["R2022b"]
+    impl.init("R2022b", install_if_missing=True, default_scope="user")
+    assert installed == [("R2022b", "user")]
     assert impl._INITIALIZED["SDK"] == "R2022b"
 
 

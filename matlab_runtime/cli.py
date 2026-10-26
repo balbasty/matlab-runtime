@@ -10,6 +10,8 @@ from .utils import (
   guess_arch,
   guess_prefix,
   matlab_release,
+  PREFIX_SCOPES,
+  user_prefix,
   mwpython_version_args,
   release_key,
   resolve_runtime,
@@ -30,8 +32,19 @@ def _make_parser():
         "or '9.13'. Default is 'all' if '--uninstall' else 'latest'."
     )
     p.add_argument("-v", "--version", nargs="+", help=_)
-    _ = f"Installation prefix. Default: '{guess_prefix()}'."
-    p.add_argument("-p", "--prefix", help=_, default=guess_prefix())
+    _ = (
+        "Installation prefix. Default: $MATLAB_RUNTIME_PATH if set, "
+        f"else ask whether to use the user prefix ('{user_prefix()}'), "
+        f"the system prefix ('{guess_prefix()}') or another folder."
+    )
+    p.add_argument("-p", "--prefix", help=_)
+    _ = (
+        "Installation location chosen when '--prefix' is not provided "
+        "and the user just presses Enter (or with '--yes'). "
+        "Default: 'system'."
+    )
+    p.add_argument("-s", "--default-scope", choices=PREFIX_SCOPES,
+                   default="system", help=_)
     _ = (
         "Uninstall this version of the runtime. "
         "Use '--version all' to uninstall all versions."
@@ -72,11 +85,11 @@ def main(args=None):
         if p.products or p.ctf:
             parser.error("'--products' and '--ctf' cannot be used with "
                          "'--uninstall'")
-        uninstall(p.version, p.prefix, p.yes)
+        uninstall(p.version, p.prefix, p.yes, p.default_scope)
     else:
         install(
             p.version, p.prefix, p.yes, p.patch,
-            products=p.products, ctf=p.ctf,
+            products=p.products, ctf=p.ctf, default_scope=p.default_scope,
         )
 
 
