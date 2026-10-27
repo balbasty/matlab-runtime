@@ -14,6 +14,7 @@ import tempfile
 import zipfile
 import tarfile
 import threading
+import warnings
 from collections import namedtuple
 from datetime import datetime
 from urllib import error, parse, request
@@ -649,6 +650,122 @@ def resolve_products(products, available=None):
             msg.append(f"Ambiguous products: {ambiguous}.")
         raise ValueError(" ".join(msg) + f" Available products: {listing}")
     return names
+
+
+def requested_products(products=None, ctf=None):
+    """
+    Products requested by name or ID, and by compiled CTF archives.
+
+    Parameters
+    ----------
+    products : [list of] str, optional
+        Product names or IDs.
+    ctf : [list of] str, optional
+        CTF archives, whose required products are added (as IDs).
+
+    Returns
+    -------
+    requested : list[str]
+        Empty if no product is requested (i.e., all products).
+    """
+    if isinstance(products, str):
+        products = [products]
+    if isinstance(ctf, str):
+        ctf = [ctf]
+    requested = list(products or [])
+    for ctf_file in (ctf or []):
+        requested += ctf_required_products(ctf_file)
+    return requested
+
+
+# Record of the products installed by `install`, in the release folder
+PRODUCTS_FILE = "matlab_runtime_products.json"
+
+
+def record_installed_products(path, products=None):
+    """
+    Record the products installed in a runtime (see `installed_products`).
+
+    Parameters
+    ----------
+    path : str
+        Root of the installation (that contains `VersionInfo.xml`).
+    products : dict[str, str], optional
+        Mapping from product ID (or name, if unknown) to installer
+        product name. None if all products were installed.
+
+    Warns
+    -----
+    UserWarning
+        If the record cannot be written.
+    """
+    record = dict(complete=products is None, products=dict(products or {}))
+    try:
+        with open(op.join(path, PRODUCTS_FILE), "w") as f:
+            json.dump(record, f, indent=2)
+    except OSError as e:
+        warnings.warn(f"Could not record the installed products: {e}")
+
+
+def installed_products(path):
+    """
+    Products installed in a runtime, if only some of them are.
+
+    The record is written by `install`. Installations that it did not
+    make (or that it made before it kept this record) are assumed to
+    provide all products.
+
+    Parameters
+    ----------
+    path : str
+        Root of the installation (that contains `VersionInfo.xml`).
+
+    Returns
+    -------
+    products : dict[str, str] | None
+        Mapping from product ID (or name) to installer product name,
+        as accepted by `resolve_products`. None if all products are
+        installed (or if it is not known).
+    """
+    try:
+        with open(op.join(path, PRODUCTS_FILE)) as f:
+            record = json.load(f)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(record, dict) or record.get("complete", True):
+        return None
+    products = record.get("products")
+    if not isinstance(products, dict):
+        return None
+    return {str(key): str(name) for key, name in products.items()}
+
+
+def missing_products(requested, installed):
+    """
+    Requested products that are not installed.
+
+    Parameters
+    ----------
+    requested : list[str]
+        Product names or IDs (see `requested_products`).
+    installed : dict[str, str] | None
+        Installed products (see `installed_products`).
+        None if all products are installed.
+
+    Returns
+    -------
+    missing : list[str]
+        Requested products (as given) that are not installed.
+    """
+    if installed is None:
+        return []
+    missing = []
+    for product in requested:
+        try:
+            resolve_products([product], installed)
+        except ValueError:
+            missing.append(product)
+    return missing
 
 
 def make_installer_input(products, prefix, logfile=None, agree="yes"):

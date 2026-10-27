@@ -136,6 +136,20 @@ Product names differ between releases (e.g., product `35010` is called
 whereas product IDs are stable. Prefer IDs or CTF archives in scripts that
 target several releases.
 
+The installed products are recorded in the release folder
+(`matlab_runtime_products.json`). If the runtime is already installed
+there with only some products, the requested products that it lacks (or
+all products, if none is requested) are added to it, without asking to
+reinstall it:
+
+```shell
+install_matlab_runtime -v R2024b --products Numerics       # partial install
+install_matlab_runtime -v R2024b --ctf my_matlab_project.ctf  # adds what is missing
+```
+
+Runtimes installed otherwise (or by older versions of this package) are
+assumed to provide all products.
+
 Partial installation is based on
 [`install_runtime_products.py`](https://github.com/pranaysy/spm-python-setup/blob/main/install_runtime_products.py)
 by [@pranaysy](https://github.com/pranaysy).
@@ -191,8 +205,13 @@ my_matlab_project = import_deployed(
 )
 ```
 
-A runtime installed with only some products may not be able to run
-other packages, which may require more products.
+The products that a package requires are checked before it is
+imported, using the record kept by `install` (see
+[Installation location](#installation-location)): if the runtime was
+installed with only some products and lacks some of those that the
+package requires, they are added (with `install_if_missing=True`) to
+the existing installation, or a warning is raised (otherwise). Runtimes
+installed otherwise are assumed to provide all products.
 
 On macOS, unless python runs under `mwpython`/`mpython`, the same code
 runs the MATLAB Runtime in a worker process (see
@@ -338,6 +357,7 @@ def init(
     *,
     products=None,
     ctf=None,
+    only_needed_products=False,
     patch=None,
 ):
     """
@@ -372,7 +392,16 @@ def init(
     default_scope : {"user", "system", "custom"}, default="system"
         Install location chosen when `prefix` is not provided and the
         user just presses Enter (or when `auto_answer` is set).
-    products, ctf, patch
+    products, ctf : [list of] str, optional
+        Products (names or IDs) that the runtime must provide, and
+        compiled CTF archives whose required products it must provide.
+        If the installed runtime lacks some of them, they are installed
+        if `install_if_missing`, and a warning is raised otherwise.
+    only_needed_products : bool
+        When installing, only install `products` and the products
+        required by `ctf` (in addition to those already installed).
+        Default: install all products.
+    patch : bool, optional
         Passed to `install`, if the runtime is installed.
 
     Raises
@@ -408,10 +437,12 @@ def import_deployed(
     `init`) with the release that the packages were compiled with (read
     from their CTF archive), or else with the most recent installed
     release. That release is installed if it is missing and
-    `install_if_missing` is set.
+    `install_if_missing` is set, as are the products that the packages
+    require, if the installed runtime lacks them.
 
     The arguments that follow `mode` are only used if the SDK is not
-    initialized yet (they are passed to `init`).
+    initialized yet (they are passed to `init`, with `ctf` set to the
+    packages' CTF archives).
 
     Parameters
     ----------
@@ -424,10 +455,14 @@ def import_deployed(
     install_if_missing, prefix, auto_answer, default_scope
         See `init`.
     only_needed_products : bool
-        If the runtime is installed, only install the products required
-        by the packages (read from their CTF archive), in addition to
-        `products`. Default: install all products.
-    products, patch
+        When installing, only install the products required by the
+        packages (read from their CTF archive) and `products`, in
+        addition to those already installed. Default: install all
+        products.
+    products : [list of] str, optional
+        Products that the runtime must provide, in addition to those
+        required by the packages.
+    patch : bool, optional
         Passed to `install`, if the runtime is installed.
 
     Returns

@@ -13,7 +13,7 @@ on:
 
 jobs:
   run-partial-install:
-    name: ${{ matrix.os }} ${{ matrix.release }} (${{ matrix.mode }})
+    name: ${{ matrix.os }} ${{ matrix.release }} (${{ matrix.mode }}${{ matrix.add-ctf && ' + ctf' || '' }})
     runs-on: ${{ matrix.os }}
     # Pre-R2019a installers are not expected to support product selection
     continue-on-error: ${{ matrix.legacy || false }}
@@ -28,6 +28,10 @@ jobs:
           - {os: windows-latest, release: R2024b, mode: products, run-ctf: true}
           - {os: macos-latest,   release: R2024b, mode: ctf,      run-ctf: true}
           - {os: macos-latest,   release: R2024b, mode: products, run-ctf: true}
+          # --- R2024b: add the products of the CTF to a partial install -
+          - {os: ubuntu-latest,  release: R2024b, mode: core, add-ctf: true, run-ctf: true}
+          - {os: windows-latest, release: R2024b, mode: core, add-ctf: true, run-ctf: true}
+          - {os: macos-latest,   release: R2024b, mode: core, add-ctf: true, run-ctf: true}
           # --- Other releases: product selection only -----------------
           - {os: ubuntu-latest,  release: R2019b, mode: core}
           - {os: ubuntu-latest,  release: R2021b, mode: core}
@@ -79,6 +83,17 @@ jobs:
           install_matlab_runtime -v ${{ matrix.release }} -y
           --prefix "${{ steps.prefix.outputs.prefix }}"
           ${{ steps.select.outputs.args }}
+
+      - name: Add products required by the CTF
+        if: ${{ matrix.add-ctf }}
+        run: >
+          install_matlab_runtime -v ${{ matrix.release }} -y
+          --prefix "${{ steps.prefix.outputs.prefix }}"
+          --ctf tests/_test_runtime/_test_runtime.ctf
+
+      - name: Show recorded products
+        if: ${{ always() }}
+        run: cat "${{ steps.prefix.outputs.prefix }}"/*/matlab_runtime_products.json || true
 
       - name: Show installed size
         if: ${{ always() }}
