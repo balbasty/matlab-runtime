@@ -179,6 +179,21 @@ that the package was compiled with (read from its CTF archive). It raises
 an error if another release has already been initialized, since a
 compiled package only runs with the MATLAB Runtime of its own release.
 
+`import_deployed` can also install that release if it is missing
+(it takes the installation arguments of `init`), optionally with only
+the products that the package requires:
+
+```python
+my_matlab_project = import_deployed(
+    my_matlab_project,
+    install_if_missing=True,
+    only_needed_products=True,  # Optional: default installs all products
+)
+```
+
+A runtime installed with only some products may not be able to run
+other packages, which may require more products.
+
 On macOS, unless python runs under `mwpython`/`mpython`, the same code
 runs the MATLAB Runtime in a worker process (see
 [Runtime mode](#runtime-mode)): functions then return numpy arrays,
@@ -320,6 +335,10 @@ def init(
     auto_answer=False,
     mode=None,
     default_scope=None,
+    *,
+    products=None,
+    ctf=None,
+    patch=None,
 ):
     """
     Set current environment so that the MATLAB Python SDK is properly
@@ -353,6 +372,8 @@ def init(
     default_scope : {"user", "system", "custom"}, default="system"
         Install location chosen when `prefix` is not provided and the
         user just presses Enter (or when `auto_answer` is set).
+    products, ctf, patch
+        Passed to `install`, if the runtime is installed.
 
     Raises
     ------
@@ -368,13 +389,29 @@ def init(
     """
     ...
 
-def import_deployed(*packages, option_list=tuple(), mode=None):
+def import_deployed(
+    *packages,
+    option_list=tuple(),
+    mode=None,
+    install_if_missing=False,
+    prefix=None,
+    auto_answer=False,
+    default_scope=None,
+    only_needed_products=False,
+    products=None,
+    patch=None,
+):
     """
     Initialize compiled MATLAB packages so that they can be used from python.
 
-    If the MATLAB SDK is not initialized yet, it is initialized with the
-    release that the packages were compiled with (read from their CTF
-    archive), or else with the most recent installed release.
+    If the MATLAB SDK is not initialized yet, it is initialized (with
+    `init`) with the release that the packages were compiled with (read
+    from their CTF archive), or else with the most recent installed
+    release. That release is installed if it is missing and
+    `install_if_missing` is set.
+
+    The arguments that follow `mode` are only used if the SDK is not
+    initialized yet (they are passed to `init`).
 
     Parameters
     ----------
@@ -384,6 +421,14 @@ def import_deployed(*packages, option_list=tuple(), mode=None):
         Options passed to MATLAB, if the runtime is not initialized yet.
     mode : {"inprocess", "remote", "auto"}, optional
         Where the MATLAB SDK runs (see `init` and "Runtime mode").
+    install_if_missing, prefix, auto_answer, default_scope
+        See `init`.
+    only_needed_products : bool
+        If the runtime is installed, only install the products required
+        by the packages (read from their CTF archive), in addition to
+        `products`. Default: install all products.
+    products, patch
+        Passed to `install`, if the runtime is installed.
 
     Returns
     -------
@@ -501,9 +546,10 @@ remote.shutdown()  # Optional: also done at exit
   in Docker) later transfers may fall back to inline. If the python
   process is killed hard, the segments of live results leak.
 
-`remote.import_deployed` starts the worker (with default options) if
-`remote.init` has not been called, with the release the package was
-compiled with (read from its CTF archive, as `import_deployed`).
+`remote.import_deployed` starts the worker (with default process options)
+if `remote.init` has not been called, with the release the package was
+compiled with (read from its CTF archive, as `import_deployed`), and
+takes the same installation arguments as `import_deployed`.
 `remote.kill()` stops the worker immediately, and `remote.is_alive()`
 tells whether it is running.
 

@@ -107,7 +107,7 @@ def test_init_python_unknown_warns(sdk, monkeypatch):
 def test_init_install_if_missing(sdk, monkeypatch):
     installed = []
 
-    def install(release, prefix, auto_answer, default_scope=None):
+    def install(release, prefix, auto_answer, default_scope=None, **kwargs):
         installed.append((release, default_scope))
         fake_runtime(sdk["prefix"] / release, release)
     monkeypatch.setattr(impl, "install", install)
@@ -158,3 +158,43 @@ def test_import_deployed_without_ctf(sdk, monkeypatch, tmp_path):
         warnings.simplefilter("error")
         impl.import_deployed(module)
     assert impl._INITIALIZED["SDK"] == "R2024b"
+
+
+@pytest.mark.parametrize("only_needed_products", [False, True])
+def test_import_deployed_install_if_missing(sdk, monkeypatch,
+                                            only_needed_products):
+    # The release of the CTF (R2024b) is missing: it is installed, with
+    # only the products the package needs if `only_needed_products`.
+    import shutil
+    shutil.rmtree(sdk["prefix"] / "R2024b")
+    monkeypatch.setattr(impl, "init_runtime", lambda options=(): None)
+    installed = []
+
+    def install(release, prefix, auto_answer, **kwargs):
+        installed.append((release, prefix, auto_answer, kwargs))
+        fake_runtime(sdk["prefix"] / release, release)
+    monkeypatch.setattr(impl, "install", install)
+
+    from . import _test_runtime
+    with pytest.raises(FileNotFoundError):
+        impl.import_deployed(_test_runtime)
+    assert not installed
+    impl.import_deployed(
+        _test_runtime, install_if_missing=True, auto_answer=True,
+        default_scope="user", products="Numerics", patch=False,
+        only_needed_products=only_needed_products,
+    )
+    ctf = [utils.deployed_ctf(_test_runtime)] if only_needed_products else None
+    assert installed == [("R2024b", None, True, dict(
+        patch=False, products="Numerics", ctf=ctf, default_scope="user",
+    ))]
+    assert impl._INITIALIZED["SDK"] == "R2024b"
+
+
+def test_import_deployed_only_needed_products_without_ctf(sdk, monkeypatch,
+                                                          tmp_path):
+    monkeypatch.setattr(impl, "init_runtime", lambda options=(): None)
+    module = types.ModuleType("nopkg")
+    module.__file__ = str(tmp_path / "nopkg" / "__init__.py")
+    with pytest.warns(UserWarning, match="all products"):
+        impl.import_deployed(module, only_needed_products=True)

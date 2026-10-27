@@ -919,7 +919,7 @@ def test_init_install_if_missing(fake_env, isolated_runtimes, monkeypatch):
     from matlab_runtime import impl
     installed = []
 
-    def install(release, prefix, auto_answer, default_scope=None):
+    def install(release, prefix, auto_answer, default_scope=None, **kwargs):
         installed.append((release, prefix, auto_answer, default_scope))
         fake_runtime(isolated_runtimes["prefix"] / release, release)
     monkeypatch.setattr(impl, "install", install)
@@ -927,6 +927,32 @@ def test_init_install_if_missing(fake_env, isolated_runtimes, monkeypatch):
                 default_scope="user", use_mpython=False)
     assert installed == [("R2024b", None, True, "user")]
     pkg = remote.import_deployed("fake_package")
+    root = str(isolated_runtimes["prefix"] / "R2024b")
+    assert pkg.init_kwargs() == {"version": "R2024b", "prefix": root}
+
+
+def test_import_deployed_install_if_missing(fake_env, isolated_runtimes,
+                                            monkeypatch):
+    # The release of the CTF is installed by the client, with only the
+    # products the package needs, then used by the worker.
+    from matlab_runtime import impl, utils
+    installed = []
+
+    def install(release, prefix, auto_answer, **kwargs):
+        installed.append((release, kwargs["ctf"]))
+        fake_runtime(isolated_runtimes["prefix"] / release, release)
+    monkeypatch.setattr(impl, "install", install)
+    real_init = remote.init
+
+    def init(*args, **kwargs):
+        return real_init(*args, use_mpython=False, **kwargs)
+    monkeypatch.setattr(remote, "init", init)
+    from . import _test_runtime
+    pkg = remote.import_deployed(
+        _test_runtime, install_if_missing=True, auto_answer=True,
+        only_needed_products=True,
+    )
+    assert installed == [("R2024b", [utils.deployed_ctf(_test_runtime)])]
     root = str(isolated_runtimes["prefix"] / "R2024b")
     assert pkg.init_kwargs() == {"version": "R2024b", "prefix": root}
 
