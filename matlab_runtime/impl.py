@@ -473,6 +473,10 @@ def init(
     auto_answer=False,
     mode=None,
     default_scope=None,
+    *,
+    products=None,
+    ctf=None,
+    patch=None,
 ):
     """
     Set current environment so that the MATLAB Python SDK is properly
@@ -521,6 +525,18 @@ def init(
         user just presses Enter (or when `auto_answer` is set)
         (see `install`).
 
+    Other Parameters
+    ----------------
+    products : [list of] str, optional
+        Only install these products, if the runtime is installed
+        (see `install`). Default: all products.
+    ctf : [list of] str, optional
+        Only install the products required by these compiled CTF
+        archives, if the runtime is installed (see `install`).
+        Combined (union) with `products`.
+    patch : bool, optional
+        Patch the runtime if it is installed (MacOS only, see `install`).
+
     Raises
     ------
     ValueError
@@ -544,7 +560,8 @@ def init(
     if _use_mode(mode) == "remote":
         from . import remote
         return remote.init(version, install_if_missing, prefix, auto_answer,
-                           default_scope=default_scope)
+                           default_scope=default_scope, products=products,
+                           ctf=ctf, patch=patch)
 
     # --- prepare  -----------------------------------------------------
     arch = guess_arch()
@@ -574,7 +591,8 @@ def init(
 
     # --- install version  ---------------------------------------------
     if not path:
-        install(release, prefix, auto_answer, default_scope=default_scope)
+        install(release, prefix, auto_answer, patch=patch,
+                products=products, ctf=ctf, default_scope=default_scope)
         release, path = resolve_runtime(release, prefix)
 
     if python_supported(release, python_version) is None:
@@ -655,6 +673,29 @@ def _deployed_release(packages):
     return next(iter(releases), None)
 
 
+def _deployed_ctfs(packages):
+    """CTF archives of compiled packages (those that have one)."""
+    return [ctf for ctf in map(deployed_ctf, packages) if ctf]
+
+
+def _init_options(packages, only_needed_products=False, products=None,
+                  **options):
+    """
+    Keyword arguments of `init` used by `import_deployed`.
+
+    With `only_needed_products`, the products required by the packages'
+    CTF archives are installed (in addition to `products`), if the
+    runtime is installed.
+    """
+    ctf = _deployed_ctfs(packages) if only_needed_products else None
+    if only_needed_products and not ctf and not products:
+        warnings.warn(
+            "No CTF archive found in the deployed packages: all products "
+            "will be installed if the runtime is missing.", stacklevel=3,
+        )
+    return dict(options, products=products, ctf=ctf)
+
+
 class _PathInitializer:
     def __init__(self):
         if not _INITIALIZED["SDK"]:
@@ -662,13 +703,31 @@ class _PathInitializer:
         self.cppext_handle = importlib.import_module(_CPP)
 
 
-def import_deployed(*packages, option_list=tuple(), mode=None):
+def import_deployed(
+    *packages,
+    option_list=tuple(),
+    mode=None,
+    install_if_missing=False,
+    prefix=None,
+    auto_answer=False,
+    default_scope=None,
+    only_needed_products=False,
+    products=None,
+    patch=None,
+):
     """
     Initialize compiled MATLAB packages so that they can be used from python.
 
-    If the MATLAB SDK is not initialized yet, it is initialized with the
-    release that the packages were compiled with (read from their CTF
-    archive), or else with the most recent installed release.
+    If the MATLAB SDK is not initialized yet, it is initialized (with
+    `init`) with the release that the packages were compiled with (read
+    from their CTF archive), or else with the most recent installed
+    release. That release is installed if it is missing and
+    `install_if_missing` is set.
+
+    The arguments `install_if_missing`, `prefix`, `auto_answer`,
+    `default_scope`, `only_needed_products`, `products` and `patch` are
+    only used if the SDK is not initialized yet (they are passed to
+    `init`).
 
     Parameters
     ----------
@@ -682,6 +741,27 @@ def import_deployed(*packages, option_list=tuple(), mode=None):
         them (`remote.RemoteHandle`) are returned: their functions
         return numpy arrays, numbers, strings, lists and dicts instead
         of `matlab.*` objects.
+    install_if_missing : bool
+        If the target release is missing, run installer (see `init`).
+    prefix : str, optional
+        Location searched first, and install location (see `init`).
+    auto_answer : bool
+        Default answer to all questions.
+        **This entails accepting the MATLAB Runtime license agreement.**
+    default_scope : {"user", "system", "custom"}, default="system"
+        Install location chosen when `prefix` is not provided and the
+        user just presses Enter (see `install`).
+    only_needed_products : bool
+        If the runtime is installed, only install the products required
+        by the packages (read from their CTF archive), in addition to
+        `products`. Default: install all products. Note that a runtime
+        installed with a subset of products may not be able to run
+        other packages.
+    products : [list of] str, optional
+        Only install these products, if the runtime is installed
+        (see `install`). Default: all products.
+    patch : bool, optional
+        Patch the runtime if it is installed (MacOS only, see `install`).
 
     Returns
     -------
@@ -696,9 +776,20 @@ def import_deployed(*packages, option_list=tuple(), mode=None):
     RuntimeError
         If the runtime is already used in another mode in this process.
     """
+    install_options = dict(
+        install_if_missing=install_if_missing,
+        prefix=prefix,
+        auto_answer=auto_answer,
+        default_scope=default_scope,
+        only_needed_products=only_needed_products,
+        products=products,
+        patch=patch,
+    )
     if _use_mode(mode) == "remote":
         from . import remote
-        return remote.import_deployed(*packages, option_list=option_list)
+        return remote.import_deployed(
+            *packages, option_list=option_list, **install_options
+        )
 
     release = _deployed_release(packages)
     sdk_release = _INITIALIZED["SDK"]
@@ -711,7 +802,8 @@ def import_deployed(*packages, option_list=tuple(), mode=None):
             f"before anything else initializes the SDK."
         )
     if not sdk_release:
-        init(release or "latest_installed")
+        init(release or "latest_installed",
+             **_init_options(packages, **install_options))
 
     if not _INITIALIZED["RUNTIME"]:
         init_runtime(option_list)

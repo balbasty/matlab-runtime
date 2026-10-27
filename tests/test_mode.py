@@ -178,7 +178,8 @@ def test_spm_runtime_pattern(macos_client, monkeypatch, installed):
     if installed:
         fake_runtime(prefix / "R2024b", "R2024b")
 
-    def install(release, prefix_, auto_answer, default_scope=None):
+    def install(release, prefix_, auto_answer, default_scope=None,
+                **kwargs):
         installs.append(release)
         fake_runtime(prefix / release, release)
     monkeypatch.setattr(impl, "install", install)

@@ -122,6 +122,9 @@ def init(
     auto_answer=False,
     *,
     default_scope=None,
+    products=None,
+    ctf=None,
+    patch=None,
     executable=None,
     use_mpython=None,
     start_timeout=600,
@@ -150,6 +153,15 @@ def init(
     default_scope : {"user", "system", "custom"}, default="system"
         Install location chosen when `prefix` is not provided and the
         user just presses Enter (see `matlab_runtime.install`).
+    products : [list of] str, optional
+        Only install these products, if the runtime is installed
+        (see `matlab_runtime.install`). Default: all products.
+    ctf : [list of] str, optional
+        Only install the products required by these compiled CTF
+        archives, if the runtime is installed. Combined (union) with
+        `products`.
+    patch : bool, optional
+        Patch the runtime if it is installed (MacOS only).
 
     Other Parameters
     ----------------
@@ -216,8 +228,8 @@ def init(
         if path is None:
             # Install here, where the user can answer questions
             from ..impl import install
-            install(version, prefix, auto_answer,
-                    default_scope=default_scope)
+            install(version, prefix, auto_answer, patch=patch,
+                    products=products, ctf=ctf, default_scope=default_scope)
             version, path = resolve_runtime(version, prefix, **options)
     session = _session(
         executable=executable,
@@ -238,14 +250,31 @@ def _deployed_release(packages):
     return _deployed_release(packages)
 
 
-def import_deployed(*packages, option_list=tuple()):
+def import_deployed(
+    *packages,
+    option_list=tuple(),
+    install_if_missing=False,
+    prefix=None,
+    auto_answer=False,
+    default_scope=None,
+    only_needed_products=False,
+    products=None,
+    patch=None,
+):
     """
     Initialize compiled MATLAB packages in the worker.
 
     If no worker is running, one is started with `init` (and default
-    options), with the release that the packages were compiled with
-    (read from their CTF archive here, as `matlab_runtime.import_deployed`
-    does), or else with the most recent installed release.
+    process options), with the release that the packages were compiled
+    with (read from their CTF archive here, as
+    `matlab_runtime.import_deployed` does), or else with the most recent
+    installed release. That release is installed (here) if it is
+    missing and `install_if_missing` is set.
+
+    The arguments `install_if_missing`, `prefix`, `auto_answer`,
+    `default_scope`, `only_needed_products`, `products` and `patch` are
+    those of `matlab_runtime.import_deployed`, and are only used if no
+    worker is running.
 
     Parameters
     ----------
@@ -271,7 +300,18 @@ def import_deployed(*packages, option_list=tuple()):
         the one initialized in the worker (or from each other).
     """
     if _SESSION is None:
-        init(_deployed_release(packages) or "latest_installed")
+        from ..impl import _init_options
+        options = _init_options(
+            packages,
+            install_if_missing=install_if_missing,
+            prefix=prefix,
+            auto_answer=auto_answer,
+            default_scope=default_scope,
+            only_needed_products=only_needed_products,
+            products=products,
+            patch=patch,
+        )
+        init(_deployed_release(packages) or "latest_installed", **options)
     session = _session()
     handles = []
     for package in packages:
