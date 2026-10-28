@@ -40,10 +40,7 @@ from .utils import (
     deployed_ctf,
     guess_pymatlab_version,
     url_download,
-    installed_products,
-    missing_products,
-    record_installed_products,
-    requested_products,
+    ctf_required_products,
     running_under_mwpython,
     MODE_ENV,
     installer_products,
@@ -107,14 +104,6 @@ def install(
         the user just presses Enter (or when `auto_answer` is set).
         Applications can use it to choose the default that suits them.
 
-    Notes
-    -----
-    The installed products are recorded in the release folder
-    (see `utils.installed_products`). If the runtime is already
-    installed in `prefix` with only some products, and requested
-    products (all products, if none is requested) are missing, they
-    are added to it (along with the products already installed).
-
     Raises
     ------
     UserInterruptionError
@@ -141,7 +130,13 @@ def install(
         return
 
     # --- requested products  ------------------------------------------
-    requested = requested_products(products, ctf)
+    if isinstance(products, str):
+        products = [products]
+    if isinstance(ctf, str):
+        ctf = [ctf]
+    requested = list(products or [])
+    for ctf_file in (ctf or []):
+        requested += ctf_required_products(ctf_file)
 
     # --- prepare  -----------------------------------------------------
     license = "matlabruntime_license_agreement.pdf"
@@ -149,7 +144,7 @@ def install(
     version = guess_release(version or "latest", arch)
     url = guess_installer(version, arch)
     raise_if_no = True
-    proc, log, ret = None, "", None  # installer outputs, for diagnostics
+    proc, log = None, ""  # installer outputs, for diagnostics
 
     if prefix is None:
         prefix = _default_prefix(default_scope, auto_answer)
@@ -158,24 +153,7 @@ def install(
     # --- check already exists -----------------------------------------
 
     path = find_runtime_in_prefix(version, prefix)
-    installed = installed_products(path) if path else None
-    missing = missing_products(requested, installed)
-    if installed is not None and (missing or not requested):
-        # Only some products are installed: add the missing ones
-        what = ", ".join(missing) if missing else "all products"
-        ok = askuser(
-            f"Runtime already exists in {path} but lacks some of the "
-            f"requested products ({what}). Install them?",
-            "yes", auto_answer,
-        )
-        if not ok:
-            print("Do not install missing products:", path)
-            return
-        if requested:
-            requested = list(installed.values()) + requested
-        print("Installing missing products...")
-
-    elif path:
+    if path:
         # Do not raise_if_no so that we can exit peacefully
         ok = askuser("Runtime already exists. Reinstall?", "no", auto_answer)
         if not ok:
@@ -224,15 +202,14 @@ def install(
             raise FileNotFoundError("No installer found in archive")
 
         # --- products -------------------------------------------------
-        names = available = None
-        if url.endswith(".zip"):
-            available = installer_products(tmpdir)
+        names = None
         if requested and not url.endswith(".zip"):
             warnings.warn(
                 f"Product selection is not supported by this "
                 f"installer ({url}). Installing all products instead."
             )
         elif requested:
+            available = installer_products(tmpdir)
             if available is None:
                 warnings.warn(
                     "The installer does not provide product metadata: "
@@ -292,16 +269,6 @@ def install(
         else:
             print("done ->", find_runtime_in_prefix(version, prefix)
                   or op.join(prefix, version))
-        if names:
-            # Keyed by ID if known (names are only kept if unknown)
-            selected = {
-                pid: name for pid, name in (available or {}).items()
-                if name in names
-            }
-            selected.update({
-                name: name for name in names
-                if name not in selected.values()
-            })
 
     # --- check --------------------------------------------------------
     path = find_runtime_in_prefix(version, prefix) or op.join(prefix, version)
@@ -329,10 +296,6 @@ def install(
         raise FileNotFoundError(
             f"Runtime not found where it is expected: {path}"
         )
-
-    # --- record products  ----------------------------------------------
-    if ret == 0:
-        record_installed_products(path, selected if names else None)
 
     # --- patch --------------------------------------------------------
     if arch[:3] == "mac" and patch is not False:
@@ -503,63 +466,6 @@ def _use_mode(mode=None):
     return wanted
 
 
-def _resolve_or_install(
-    version,
-    prefix=None,
-    install_if_missing=False,
-    auto_answer=False,
-    default_scope=None,
-    products=None,
-    ctf=None,
-    only_needed_products=False,
-    patch=None,
-    **options,
-):
-    """
-    Find the runtime used by `init`, after installing it (or the
-    requested products that it lacks) if `install_if_missing`.
-
-    Parameters
-    ----------
-    **options
-        Keyword arguments of `utils.resolve_runtime`
-        (`python_version`, `accept`).
-
-    Returns
-    -------
-    release : str
-    path : str
-        Root of the installation.
-    """
-    release, path = resolve_runtime(
-        version, prefix, missing_ok=install_if_missing, **options
-    )
-    missing = []
-    if path and (products or ctf):
-        try:
-            requested = requested_products(products, ctf)
-        except ValueError:  # unreadable CTF: cannot check
-            requested = []
-        missing = missing_products(requested, installed_products(path))
-        if missing and not install_if_missing:
-            warnings.warn(
-                f"The MATLAB Runtime {release} installed in {path} lacks "
-                f"products that are required ({', '.join(missing)}). "
-                f"Use `install_if_missing=True` to install them."
-            )
-            missing = []
-    if path and not missing:
-        return release, path
-
-    if not only_needed_products:
-        products = ctf = None
-    # Missing products are added to the existing installation
-    install(release, op.dirname(path) if path else prefix, auto_answer,
-            patch=patch, products=products, ctf=ctf,
-            default_scope=default_scope)
-    return resolve_runtime(release, prefix, **options)
-
-
 def init(
     version="latest_installed",
     install_if_missing=False,
@@ -570,7 +476,6 @@ def init(
     *,
     products=None,
     ctf=None,
-    only_needed_products=False,
     patch=None,
 ):
     """
@@ -623,18 +528,12 @@ def init(
     Other Parameters
     ----------------
     products : [list of] str, optional
-        Products that the runtime must provide, by installer name,
-        short name or ID (see `install`).
+        Only install these products, if the runtime is installed
+        (see `install`). Default: all products.
     ctf : [list of] str, optional
-        Compiled CTF archives, whose required products the runtime
-        must provide. Combined (union) with `products`.
-        If the runtime is installed but lacks some of these products
-        (see `utils.installed_products`), they are installed if
-        `install_if_missing`, and a warning is raised otherwise.
-    only_needed_products : bool
-        When installing, only install `products` and the products
-        required by `ctf` (in addition to those already installed).
-        Default: install all products.
+        Only install the products required by these compiled CTF
+        archives, if the runtime is installed (see `install`).
+        Combined (union) with `products`.
     patch : bool, optional
         Patch the runtime if it is installed (MacOS only, see `install`).
 
@@ -662,8 +561,7 @@ def init(
         from . import remote
         return remote.init(version, install_if_missing, prefix, auto_answer,
                            default_scope=default_scope, products=products,
-                           ctf=ctf, only_needed_products=only_needed_products,
-                           patch=patch)
+                           ctf=ctf, patch=patch)
 
     # --- prepare  -----------------------------------------------------
     arch = guess_arch()
@@ -686,12 +584,16 @@ def init(
 
     # --- find version  ------------------------------------------------
     python_version = "{}.{}".format(*sys.version_info[:2])
-    # --- install version (or missing products) if needed  -------------
-    release, path = _resolve_or_install(
-        version, prefix, install_if_missing, auto_answer, default_scope,
-        products, ctf, only_needed_products, patch,
-        python_version=python_version,
+    release, path = resolve_runtime(
+        version, prefix, python_version=python_version,
+        missing_ok=install_if_missing,
     )
+
+    # --- install version  ---------------------------------------------
+    if not path:
+        install(release, prefix, auto_answer, patch=patch,
+                products=products, ctf=ctf, default_scope=default_scope)
+        release, path = resolve_runtime(release, prefix)
 
     if python_supported(release, python_version) is None:
         warnings.warn(
@@ -776,12 +678,17 @@ def _deployed_ctfs(packages):
     return [ctf for ctf in map(deployed_ctf, packages) if ctf]
 
 
-def _init_options(packages, **options):
+def _init_options(packages, only_needed_products=False, products=None,
+                  **options):
     """
-    Keyword arguments of `init` used by `import_deployed`: the runtime
-    must provide the products required by the packages' CTF archives.
+    Keyword arguments of `init` used by `import_deployed`.
+
+    With `only_needed_products`, the products required by the packages'
+    CTF archives are installed (in addition to `products`), if the
+    runtime is installed.
     """
-    return dict(options, ctf=_deployed_ctfs(packages) or None)
+    ctf = _deployed_ctfs(packages) if only_needed_products else None
+    return dict(options, products=products, ctf=ctf)
 
 
 class _PathInitializer:
@@ -810,10 +717,7 @@ def import_deployed(
     `init`) with the release that the packages were compiled with (read
     from their CTF archive), or else with the most recent installed
     release. That release is installed if it is missing and
-    `install_if_missing` is set, as are the products that the packages
-    require if the installed runtime lacks them (which is known for
-    runtimes installed with only some products by `install`, see
-    `utils.installed_products`).
+    `install_if_missing` is set.
 
     The arguments `install_if_missing`, `prefix`, `auto_answer`,
     `default_scope`, `only_needed_products`, `products` and `patch` are
@@ -843,14 +747,14 @@ def import_deployed(
         Install location chosen when `prefix` is not provided and the
         user just presses Enter (see `install`).
     only_needed_products : bool
-        When installing, only install the products required by the
-        packages (read from their CTF archive) and `products`, in
-        addition to those already installed. Default: install all
-        products. Products that other packages require are added
-        later, when they are imported with `install_if_missing`.
+        If the runtime is installed, only install the products required
+        by the packages (read from their CTF archive), in addition to
+        `products`. Default: install all products. Note that a runtime
+        installed with a subset of products may not be able to run
+        other packages.
     products : [list of] str, optional
-        Products that the runtime must provide, in addition to those
-        required by the packages (see `install`).
+        Only install these products, if the runtime is installed
+        (see `install`). Default: all products.
     patch : bool, optional
         Patch the runtime if it is installed (MacOS only, see `install`).
 

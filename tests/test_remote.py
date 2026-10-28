@@ -957,32 +957,6 @@ def test_import_deployed_install_if_missing(fake_env, isolated_runtimes,
     assert pkg.init_kwargs() == {"version": "R2024b", "prefix": root}
 
 
-def test_import_deployed_missing_products(fake_env, isolated_runtimes,
-                                          monkeypatch):
-    # R2024b was installed with Numerics only: the Python product that
-    # the package needs is added (here) before the worker starts.
-    from matlab_runtime import impl, utils
-    root = fake_runtime(isolated_runtimes["prefix"] / "R2024b", "R2024b")
-    utils.record_installed_products(
-        root, {"35010": "MATLAB Runtime - Numerics"}
-    )
-    installed = []
-
-    def install(release, prefix, auto_answer, **kwargs):
-        installed.append((release, prefix))
-        utils.record_installed_products(root)
-    monkeypatch.setattr(impl, "install", install)
-    real_init = remote.init
-
-    def init(*args, **kwargs):
-        return real_init(*args, use_mpython=False, **kwargs)
-    monkeypatch.setattr(remote, "init", init)
-    from . import _test_runtime
-    pkg = remote.import_deployed(_test_runtime, install_if_missing=True)
-    assert installed == [("R2024b", str(isolated_runtimes["prefix"]))]
-    assert pkg.init_kwargs() == {"version": "R2024b", "prefix": root}
-
-
 def test_init_not_found(fake_env, isolated_runtimes):
     # Through mwpython, the runtime is resolved in the client: the error
     # is raised here and no worker is started.
