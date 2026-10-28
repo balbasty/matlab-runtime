@@ -124,7 +124,6 @@ def init(
     default_scope=None,
     products=None,
     ctf=None,
-    only_needed_products=False,
     patch=None,
     executable=None,
     use_mpython=None,
@@ -154,14 +153,13 @@ def init(
     default_scope : {"user", "system", "custom"}, default="system"
         Install location chosen when `prefix` is not provided and the
         user just presses Enter (see `matlab_runtime.install`).
-    products, ctf : [list of] str, optional
-        Products that the runtime must provide, and compiled CTF
-        archives whose required products it must provide
-        (see `matlab_runtime.init`). They are checked (and installed)
-        here, when the runtime is resolved here (see Notes).
-    only_needed_products : bool
-        When installing, only install `products` and the products
-        required by `ctf` (see `matlab_runtime.init`).
+    products : [list of] str, optional
+        Only install these products, if the runtime is installed
+        (see `matlab_runtime.install`). Default: all products.
+    ctf : [list of] str, optional
+        Only install the products required by these compiled CTF
+        archives, if the runtime is installed. Combined (union) with
+        `products`.
     patch : bool, optional
         Patch the runtime if it is installed (MacOS only).
 
@@ -219,14 +217,20 @@ def init(
     mpython = _uses_mpython(executable, use_mpython)
     if mpython or install_if_missing:
         from ..cli import _has_mwpython
-        from ..impl import _resolve_or_install
-        # Install here, where the user can answer questions
-        version, path = _resolve_or_install(
-            version, prefix, install_if_missing, auto_answer,
-            default_scope, products, ctf, only_needed_products, patch,
+        from ..utils import resolve_runtime
+        options = dict(
             python_version=_worker_python(executable, use_mpython),
             accept=_has_mwpython if mpython else None,
         )
+        version, path = resolve_runtime(
+            version, prefix, missing_ok=install_if_missing, **options
+        )
+        if path is None:
+            # Install here, where the user can answer questions
+            from ..impl import install
+            install(version, prefix, auto_answer, patch=patch,
+                    products=products, ctf=ctf, default_scope=default_scope)
+            version, path = resolve_runtime(version, prefix, **options)
     session = _session(
         executable=executable,
         use_mpython=use_mpython,

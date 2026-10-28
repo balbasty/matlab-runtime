@@ -14,7 +14,6 @@ import tempfile
 import zipfile
 import tarfile
 import threading
-import warnings
 from collections import namedtuple
 from datetime import datetime
 from urllib import error, parse, request
@@ -650,32 +649,6 @@ def resolve_products(products, available=None):
             msg.append(f"Ambiguous products: {ambiguous}.")
         raise ValueError(" ".join(msg) + f" Available products: {listing}")
     return names
-
-
-def requested_products(products=None, ctf=None):
-    """
-    Products requested by name or ID, and by compiled CTF archives.
-
-    Parameters
-    ----------
-    products : [list of] str, optional
-        Product names or IDs.
-    ctf : [list of] str, optional
-        CTF archives, whose required products are added (as IDs).
-
-    Returns
-    -------
-    requested : list[str]
-        Empty if no product is requested (i.e., all products).
-    """
-    if isinstance(products, str):
-        products = [products]
-    if isinstance(ctf, str):
-        ctf = [ctf]
-    requested = list(products or [])
-    for ctf_file in (ctf or []):
-        requested += ctf_required_products(ctf_file)
-    return requested
 
 
 def make_installer_input(products, prefix, logfile=None, agree="yes"):
