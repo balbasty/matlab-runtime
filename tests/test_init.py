@@ -109,8 +109,8 @@ def test_init_install_if_missing(sdk, monkeypatch):
 
     def install(release, prefix, auto_answer, default_scope=None, **kwargs):
         installed.append((release, default_scope))
-        fake_runtime(sdk["prefix"] / release, release)
-    monkeypatch.setattr(impl, "install", install)
+        return release, fake_runtime(sdk["prefix"] / release, release)
+    monkeypatch.setattr(impl, "_install", install)
     monkeypatch.setitem(utils.SUPPORTED_PYTHON_VERSIONS, "R2022b",
                         [current_python()])
     sdk["version"] = "9.13.0"
@@ -172,8 +172,8 @@ def test_import_deployed_install_if_missing(sdk, monkeypatch,
 
     def install(release, prefix, auto_answer, **kwargs):
         installed.append((release, prefix, auto_answer, kwargs))
-        fake_runtime(sdk["prefix"] / release, release)
-    monkeypatch.setattr(impl, "install", install)
+        return release, fake_runtime(sdk["prefix"] / release, release)
+    monkeypatch.setattr(impl, "_install", install)
 
     from . import _test_runtime
     with pytest.raises(FileNotFoundError):
@@ -187,6 +187,7 @@ def test_import_deployed_install_if_missing(sdk, monkeypatch,
     ctf = [utils.deployed_ctf(_test_runtime)] if only_needed_products else None
     assert installed == [("R2024b", None, True, dict(
         patch=False, products="Numerics", ctf=ctf, default_scope="user",
+        missing=True,
     ))]
     assert impl._INITIALIZED["SDK"] == "R2024b"
 

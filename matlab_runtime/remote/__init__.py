@@ -216,21 +216,22 @@ def init(
     path = None
     mpython = _uses_mpython(executable, use_mpython)
     if mpython or install_if_missing:
-        from ..cli import _has_mwpython
-        from ..utils import resolve_runtime
-        options = dict(
-            python_version=_worker_python(executable, use_mpython),
-            accept=_has_mwpython if mpython else None,
-        )
-        version, path = resolve_runtime(
-            version, prefix, missing_ok=install_if_missing, **options
-        )
-        if path is None:
+        python_version = _worker_python(executable, use_mpython)
+        if install_if_missing:
             # Install here, where the user can answer questions
             from ..impl import install
-            install(version, prefix, auto_answer, patch=patch,
-                    products=products, ctf=ctf, default_scope=default_scope)
-            version, path = resolve_runtime(version, prefix, **options)
+            version, path = install(
+                version, prefix, auto_answer, patch=patch,
+                products=products, ctf=ctf, default_scope=default_scope,
+                if_missing="mwpython" if mpython else True,
+                python_version=python_version or False,
+            )
+        else:
+            from ..utils import has_mwpython, resolve_runtime
+            version, path = resolve_runtime(
+                version, prefix, python_version=python_version,
+                accept=has_mwpython,
+            )
     session = _session(
         executable=executable,
         use_mpython=use_mpython,

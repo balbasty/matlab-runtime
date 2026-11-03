@@ -6,7 +6,6 @@ import sys
 from . import impl
 from .impl import install, uninstall
 from .utils import (
-  askuser,
   guess_arch,
   guess_prefix,
   matlab_release,
@@ -16,6 +15,7 @@ from .utils import (
   release_key,
   resolve_runtime,
   RuntimeNotFoundError,
+  UserInterruptionError,
   VersionNotFoundError,
   _env_flag,
 )
@@ -73,6 +73,14 @@ def _make_parser():
         "archives. Can be combined with '--products'."
     )
     p.add_argument("-c", "--ctf", nargs="+", metavar="FILE", help=_)
+    _ = (
+        "Only install the runtime if no matching installation is found "
+        "(then, '--version' defaults to 'latest_installed'). "
+        "With 'mwpython', only count installations that ship mwpython "
+        "(the ones that mpython can use, on MacOS)."
+    )
+    p.add_argument("--if-missing", nargs="?", const=True,
+                   default=False, metavar="mwpython", help=_)
     return p
 
 
@@ -87,9 +95,12 @@ def main(args=None):
                          "'--uninstall'")
         uninstall(p.version, p.prefix, p.yes, p.default_scope)
     else:
+        if p.if_missing not in (False, True, "mwpython"):
+            parser.error("'--if-missing' only accepts 'mwpython'")
         install(
             p.version, p.prefix, p.yes, p.patch,
             products=p.products, ctf=p.ctf, default_scope=p.default_scope,
+            if_missing=p.if_missing,
         )
 
 
@@ -121,8 +132,8 @@ Examples:
 """  # noqa: E501
 
 
-def _has_mwpython(path):
-    return op.exists(op.join(path, "bin", "mwpython"))
+# Kept for backward compatibility: use `utils.has_mwpython`
+_has_mwpython = _utils.has_mwpython
 
 
 def _find_mwpython_runtime(variant="latest_installed", python_version=None,
@@ -160,7 +171,8 @@ def _find_mwpython_runtime(variant="latest_installed", python_version=None,
     if python_version is None:
         python_version = sys.version_info
     return resolve_runtime(
-        variant, prefix, python_version=python_version, accept=_has_mwpython
+        variant, prefix, python_version=python_version,
+        accept=_utils.has_mwpython,
     )
 
 
@@ -333,9 +345,10 @@ def _install_missing_runtime(error, variant):
     Offer to install the runtime that `mpython` could not find.
 
     Prompts only if stdin is interactive and `$MATLAB_RUNTIME_OFFLINE`
-    is not set. Otherwise (or if the user declines, or the release to
-    install cannot be determined, or the installation fails), prints
-    `error` with the command that installs the runtime.
+    is not set (`install` then asks where to install the runtime, and
+    to accept its license). Otherwise (or if the user declines, or the
+    installation fails), prints `error` with the command that installs
+    the runtime.
 
     Parameters
     ----------
@@ -355,35 +368,20 @@ def _install_missing_runtime(error, variant):
         interactive = sys.stdin is not None and sys.stdin.isatty()
     except Exception:
         interactive = False
-    release = None
     if interactive and not _env_flag("MATLAB_RUNTIME_OFFLINE"):
         try:
             # Same resolution as `init(install_if_missing=True)`; may
             # query the MathWorks servers for 'latest_installed'.
-            release, _ = resolve_runtime(
-                variant, python_version=python_version, missing_ok=True
-            )
-        except Exception:
-            release = None
-    if release:
-        try:
-            yes = askuser(
-                f"No MATLAB Runtime {release} found. Install it now?",
-                "yes",
-            )
-        except (EOFError, KeyboardInterrupt):
-            print()
-            yes = False
-        if yes:
-            try:
-                impl.install(release)
-            except (Exception, KeyboardInterrupt) as e:
-                print(f"Failed to install MATLAB Runtime {release}: {e}",
-                      file=sys.stderr)
-                return False
+            impl.install(variant, if_missing="mwpython",
+                         python_version=python_version)
             return True
+        except (UserInterruptionError, EOFError, KeyboardInterrupt):
+            print()
+        except Exception as e:
+            print(f"Could not install the MATLAB Runtime: {e}",
+                  file=sys.stderr)
 
-    hint = release or _guess_missing_release(variant, python_version)
+    hint = _guess_missing_release(variant, python_version)
     message = str(error)
     if hint:
         message += (

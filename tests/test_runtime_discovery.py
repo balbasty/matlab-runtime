@@ -9,6 +9,7 @@ import pytest
 from matlab_runtime import cli, utils
 from matlab_runtime.utils import (
     RuntimeNotFoundError,
+    UserInterruptionError,
     UnsupportedPythonError,
     ctf_matlab_release,
     deployed_ctf,
@@ -420,12 +421,12 @@ def test_mpython_not_found(mac, capsys):
 
 @pytest.fixture
 def missing(mac, monkeypatch):
-    """No runtime installed; stubbed tty, askuser and install."""
+    """No runtime installed; stubbed tty and installer."""
     from matlab_runtime import impl
     monkeypatch.setattr(utils, "SUPPORTED_PYTHON_VERSIONS",
                         {"R2025b": [current_python()]})
     monkeypatch.delenv("MATLAB_RUNTIME_OFFLINE", raising=False)
-    state = dict(mac, tty=True, answer=True, questions=[], installed=[],
+    state = dict(mac, tty=True, answer=True, installed=[],
                  install_error=None)
 
     class Stdin:
@@ -433,17 +434,15 @@ def missing(mac, monkeypatch):
             return state["tty"]
     monkeypatch.setattr(cli.sys, "stdin", Stdin())
 
-    def askuser(question, default="yes", **kwargs):
-        state["questions"].append(question)
-        return state["answer"]
-    monkeypatch.setattr(cli, "askuser", askuser)
-
     def install(version=None, prefix=None, auto_answer=False, **kwargs):
+        # `impl.install` only calls `_install` if the runtime is missing
+        if not state["answer"]:
+            raise UserInterruptionError("Accept the license and install?")
         state["installed"].append(version)
         if state["install_error"]:
             raise state["install_error"]
-        fake_mwpython(mac["prefix"] / version, version)
-    monkeypatch.setattr(impl, "install", install)
+        return version, fake_mwpython(mac["prefix"] / version, version)
+    monkeypatch.setattr(impl, "_install", install)
 
     def latest_release(*args, **kwargs):
         raise AssertionError("unexpected network query")
@@ -453,11 +452,15 @@ def missing(mac, monkeypatch):
 
 def test_mpython_install_yes(missing):
     assert cli.mpython(["-variant", "R2025b", "-m", "spm_runtime"]) == 0
-    assert missing["questions"] == [
-        "No MATLAB Runtime R2025b found. Install it now?"
-    ]
     assert missing["installed"] == ["R2025b"]
     assert missing["calls"][0][0].startswith(str(missing["prefix"]))
+
+
+def test_mpython_install_only_mwpython(missing):
+    # A runtime without mwpython does not count: it is installed again
+    fake_runtime(missing["prefix"] / "R2025b", "R2025b")
+    assert cli.mpython(["-variant", "R2025b", "script.py"]) == 0
+    assert missing["installed"] == ["R2025b"]
 
 
 def test_mpython_install_returncode(missing, monkeypatch):
@@ -482,7 +485,6 @@ def test_mpython_install_no_tty(missing, capsys):
     missing["tty"] = False
     assert cli.mpython(["-variant", "R2025b", "script.py"]) == 1
     assert "install_matlab_runtime --version R2025b" in capsys.readouterr().err
-    assert not missing["questions"]
     assert not missing["installed"]
     assert not missing["calls"]
 
@@ -492,14 +494,12 @@ def test_mpython_install_no_tty_latest_installed(missing, capsys):
     missing["tty"] = False
     assert cli.mpython(["script.py"]) == 1
     assert "install_matlab_runtime --version R2025b" in capsys.readouterr().err
-    assert not missing["questions"]
 
 
 def test_mpython_install_offline(missing, monkeypatch, capsys):
     monkeypatch.setenv("MATLAB_RUNTIME_OFFLINE", "1")
     assert cli.mpython(["-variant", "R2025b", "script.py"]) == 1
     assert "install_matlab_runtime --version R2025b" in capsys.readouterr().err
-    assert not missing["questions"]
     assert not missing["installed"]
 
 
@@ -520,7 +520,6 @@ def test_mpython_install_resolution_fails(missing, capsys):
     # latest_release (network) fails: message only, no prompt.
     assert cli.mpython(["script.py"]) == 1
     assert "No installed MATLAB Runtime found" in capsys.readouterr().err
-    assert not missing["questions"]
     assert not missing["installed"]
 
 
@@ -531,7 +530,6 @@ def test_mpython_install_unsupported_python(missing, monkeypatch, capsys):
     err = capsys.readouterr().err
     assert "does not support Python" in err
     assert "install_matlab_runtime" not in err
-    assert not missing["questions"]
     assert not missing["installed"]
 
 

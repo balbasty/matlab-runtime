@@ -169,6 +169,7 @@ def test_cli_products(monkeypatch):
         products=["Numerics", "MATLAB Runtime - Python", "35055"],
         ctf=["a.ctf", "b.ctf"],
         default_scope="system",
+        if_missing=False,
     )
 
 
@@ -180,7 +181,8 @@ def test_cli_defaults(monkeypatch):
     cli.main([])
     (args, kwargs), = calls
     assert args == (None, None, False, False)
-    assert kwargs == dict(products=None, ctf=None, default_scope="system")
+    assert kwargs == dict(products=None, ctf=None, default_scope="system",
+                          if_missing=False)
 
 
 def test_cli_rejects_products_on_removal():
