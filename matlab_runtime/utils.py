@@ -125,8 +125,25 @@ def python_argv(*args):
 # ----------------------------------------------------------------------
 
 
+LICENSE_URL = (
+    "https://mathworks.com/help/compiler/install-the-matlab-runtime.html"
+)
+
+
+def tilde(path):
+    """Shorten `path` for display: the home folder becomes `~` (Unix)."""
+    if os.name == "nt":
+        return path
+    home = op.expanduser("~")
+    if home not in ("", "~", os.sep) and (
+        path == home or path.startswith(home.rstrip(os.sep) + os.sep)
+    ):
+        return "~" + path[len(home.rstrip(os.sep)):]
+    return path
+
+
 def askuser(question, default="yes", auto_answer=False, raise_if_no=False):
-    options = "([yes]/no)" if default == "yes" else "(yes/[no])"
+    options = "[Y/n]" if default == "yes" else "[y/N]"
     if auto_answer:
         yesno = True if default == "yes" else False
     else:
@@ -1104,6 +1121,15 @@ def latest_release(python_version=None, arch=None):
     )
 
 
+def has_mwpython(path):
+    """
+    Whether the installation at `path` ships `bin/mwpython`.
+
+    Those are the installations that `mpython` can use (MacOS).
+    """
+    return op.exists(op.join(path, "bin", "mwpython"))
+
+
 def resolve_runtime(
     version="latest_installed",
     prefix=None,
@@ -1382,15 +1408,18 @@ def askprefix(default="system", auto_answer=False):
             )
         return prefixes[default]
 
+    rows = [
+        ("user", tilde(prefixes["user"]), "(no admin rights needed)"),
+        ("system", tilde(prefixes["system"]), "(may need admin rights)"),
+        ("custom", "another folder", ""),
+    ]
+    width = max(len(where) for _, where, _ in rows)
     print("Where should the MATLAB Runtime be installed?")
-    print(f"  [1] user:   {prefixes['user']} (no admin rights needed)")
-    print(f"  [2] system: {prefixes['system']} (may need admin rights)")
-    print("  [3] custom: a folder of your choice")
-    options = "/".join(
-        f"[{scope}]" if scope == default else scope for scope in PREFIX_SCOPES
-    )
+    for i, (scope, where, note) in enumerate(rows, 1):
+        print(f"  {i}. {scope:<6}  {where:<{width}}  {note}".rstrip())
     while True:
-        choice = input(f"Installation location ({options}) ").strip().lower()
+        choice = input(f"Location (user/system/custom) [{default}]: ")
+        choice = choice.strip().lower()
         choice = choice or default
         choice = _SCOPE_ALIASES.get(choice, choice)
         if choice in prefixes:
@@ -1399,7 +1428,7 @@ def askprefix(default="system", auto_answer=False):
             break
         print("Please answer 'user', 'system' or 'custom' (or 1, 2, 3).")
     while True:
-        prefix = input("Installation prefix: ").strip()
+        prefix = input("Folder: ").strip()
         if prefix:
             return op.expanduser(prefix)
 

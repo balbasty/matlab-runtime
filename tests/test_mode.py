@@ -181,8 +181,8 @@ def test_spm_runtime_pattern(macos_client, monkeypatch, installed):
     def install(release, prefix_, auto_answer, default_scope=None,
                 **kwargs):
         installs.append(release)
-        fake_runtime(prefix / release, release)
-    monkeypatch.setattr(impl, "install", install)
+        return release, fake_runtime(prefix / release, release)
+    monkeypatch.setattr(impl, "_install", install)
 
     matlab_runtime.init("R2024b", install_if_missing=True)
     assert installs == ([] if installed else ["R2024b"])

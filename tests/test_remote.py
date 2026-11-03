@@ -921,8 +921,9 @@ def test_init_install_if_missing(fake_env, isolated_runtimes, monkeypatch):
 
     def install(release, prefix, auto_answer, default_scope=None, **kwargs):
         installed.append((release, prefix, auto_answer, default_scope))
-        fake_runtime(isolated_runtimes["prefix"] / release, release)
-    monkeypatch.setattr(impl, "install", install)
+        path = isolated_runtimes["prefix"] / release
+        return release, fake_runtime(path, release)
+    monkeypatch.setattr(impl, "_install", install)
     remote.init("R2024b", install_if_missing=True, auto_answer=True,
                 default_scope="user", use_mpython=False)
     assert installed == [("R2024b", None, True, "user")]
@@ -940,8 +941,9 @@ def test_import_deployed_install_if_missing(fake_env, isolated_runtimes,
 
     def install(release, prefix, auto_answer, **kwargs):
         installed.append((release, kwargs["ctf"]))
-        fake_runtime(isolated_runtimes["prefix"] / release, release)
-    monkeypatch.setattr(impl, "install", install)
+        path = isolated_runtimes["prefix"] / release
+        return release, fake_runtime(path, release)
+    monkeypatch.setattr(impl, "_install", install)
     real_init = remote.init
 
     def init(*args, **kwargs):

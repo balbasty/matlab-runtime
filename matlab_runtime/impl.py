@@ -13,6 +13,7 @@ import atexit
 import importlib
 import os
 import os.path as op
+import re
 import shutil
 import subprocess
 import sys
@@ -30,6 +31,9 @@ from .utils import (
     guess_release,
     find_runtime,
     find_runtime_in_prefix,
+    has_mwpython,
+    LICENSE_URL,
+    tilde,
     patch_runtime,
     macos_version,
     matlab_release,
@@ -59,12 +63,14 @@ def install(
     products=None,
     ctf=None,
     default_scope=None,
+    if_missing=False,
+    python_version=None,
 ):
     """
     Install the matlab runtime.
 
     !!! warning
-        BY SETTING `default_answer=True`, YOU ACCEPT THE TERMS OF THE
+        BY SETTING `auto_answer=True`, YOU ACCEPT THE TERMS OF THE
         MATLAB RUNTIME LICENSE. THE MATLAB RUNTIME INSTALLER WILL BE
         RUN WITH THE ARGUMENT `-agreeToLicense yes`.
         IF YOU ARE NOT WILLING TO DO SO, DO NOT CALL THIS FUNCTION.
@@ -75,6 +81,9 @@ def install(
     ----------
     version : [list of] str, default="latest"
         MATLAB version, such as 'latest' or 'R2022b' or '9.13'.
+        With `if_missing`, the default is 'latest_installed': any
+        installed release will do, else the most recent release (that
+        supports `python_version`) is installed.
     prefix : str, optional
         Install location. Default: `$MATLAB_RUNTIME_PATH` if set, else
         the user is asked to choose (see `utils.askprefix`) between:
@@ -87,10 +96,11 @@ def install(
             * Linux:    /usr/local/MATLAB/MATLAB_Runtime
             * MacOS:    /Applications/MATLAB/MATLAB_Runtime
         * "custom": a folder that the user types.
-    default_answer : bool
+    auto_answer : bool
         Default answer to all questions.
-    patch : bool
-        Patch the runtime if needed (MacOS only).
+        **This entails accepting the MATLAB Runtime license agreement.**
+    patch : bool, optional
+        Patch the runtime (MacOS only, see the README). Default: no.
     products : [list of] str, optional
         Only install these products. Products can be specified by
         installer name (e.g., 'MATLAB Runtime - Numerics'),
@@ -103,13 +113,35 @@ def install(
         Installation location chosen when `prefix` is not provided and
         the user just presses Enter (or when `auto_answer` is set).
         Applications can use it to choose the default that suits them.
+    if_missing : bool | {"mwpython"}, default=False
+        Only install the runtime if no matching installation is found
+        (see `utils.resolve_runtime`, which searches `prefix` first,
+        then the standard locations). If one is found, nothing is asked
+        or printed, and it is returned. With "mwpython", only count
+        installations that ship `bin/mwpython` (the ones that `mpython`
+        can use, on MacOS).
+    python_version : str | False, optional
+        With `if_missing`, only count releases that support this python
+        version (e.g. '3.12'). Default: the running python.
+        False: do not check the python version.
+
+    Returns
+    -------
+    release : str
+        MATLAB release (e.g. 'R2024b').
+    path : str
+        Root of the installation (installed or found).
+        A list of `(release, path)` is returned if `version` is a list.
 
     Raises
     ------
     UserInterruptionError
-        If the user answers no to a question.
+        If the user declines the installation.
     ValueError
         If a requested product is unknown.
+    VersionNotFoundError
+        With `if_missing`, if the requested release does not support
+        `python_version` (`UnsupportedPythonError`).
 
     Warns
     -----
@@ -117,18 +149,69 @@ def install(
         If products are requested but the installer does not
         support product selection (all products are then installed).
     """
+    if if_missing not in (False, None, True, "mwpython"):
+        raise ValueError(
+            f"Invalid value for if_missing: {if_missing!r}. "
+            f"Expected True, False or 'mwpython'."
+        )
+    options = dict(patch=patch, products=products, ctf=ctf,
+                   default_scope=default_scope)
+
+    def find(a_version):
+        # (release, path) of a matching installation, else (release, None)
+        if python_version is None:
+            python = sys.version_info
+        else:
+            python = python_version or None
+        return resolve_runtime(
+            a_version or "latest_installed",
+            prefix,
+            python_version=python,
+            accept=has_mwpython if if_missing == "mwpython" else None,
+            missing_ok=True,
+        )
+
     # --- iterate if multiple versions  --------------------------------
     if isinstance(version, (list, tuple, set)):
-        if prefix is None:
+        versions = list(version)
+        found = [find(v) if if_missing else (v, None) for v in versions]
+        if prefix is None and not all(path for _, path in found):
             # Ask for the location once
             prefix = _default_prefix(default_scope, auto_answer)
-        for a_version in version:
-            install(
-                a_version, prefix, auto_answer, patch,
-                products=products, ctf=ctf,
-            )
-        return
+        return [
+            (release, path) if path else
+            _install(release, prefix, auto_answer, missing=bool(if_missing),
+                     **options)
+            for release, path in found
+        ]
 
+    # --- single version  ----------------------------------------------
+    if if_missing:
+        version, path = find(version)
+        if path:
+            return version, path
+    return _install(version, prefix, auto_answer, missing=bool(if_missing),
+                    **options)
+
+
+def _install(
+    version=None,
+    prefix=None,
+    auto_answer=False,
+    patch=None,
+    products=None,
+    ctf=None,
+    default_scope=None,
+    missing=False,
+):
+    """
+    Install one release of the runtime (see `install`).
+
+    The questions are asked up front (location, license), so that the
+    download and installation then run without interruption.
+    `missing` only changes the first message.
+    Returns `(release, path)`.
+    """
     # --- requested products  ------------------------------------------
     if isinstance(products, str):
         products = [products]
@@ -143,51 +226,60 @@ def install(
     arch = guess_arch()
     version = guess_release(version or "latest", arch)
     url = guess_installer(version, arch)
-    raise_if_no = True
+    name = f"MATLAB Runtime {version}"
+    update = re.search(r"_Update_(\d+)_", url)
+    full_name = f"{name} (Update {update[1]})" if update else name
     proc, log = None, ""  # installer outputs, for diagnostics
 
+    if missing:
+        print(f"{name} is not installed.")
     if prefix is None:
         prefix = _default_prefix(default_scope, auto_answer)
     prefix = op.realpath(op.abspath(prefix))
 
     # --- check already exists -----------------------------------------
-
     path = find_runtime_in_prefix(version, prefix)
     if path:
-        # Do not raise_if_no so that we can exit peacefully
-        ok = askuser("Runtime already exists. Reinstall?", "no", auto_answer)
-        if not ok:
-            print("Do not reinstall:", path)
-            return
-        print("Runtime already exists. Reinstalling...")
-
-    elif find_runtime(version):
+        print(f"{name} is already installed in {tilde(path)}.")
+        if not askuser("Reinstall it?", "no", auto_answer):
+            return version, path
+    elif not missing:
+        # With `missing`, other installations have already been rejected
         path = find_runtime(version)
-        msg = (
-            f"Runtime already exists in a different location ({path}). "
-            "Install anyway?"
-        )
-        ok = askuser(msg, "no", auto_answer)
-        if not ok:
-            print("Do not install:", op.join(prefix, version))
-            return
+        if path:
+            print(f"{name} is already installed in {tilde(path)}.")
+            if not askuser(f"Install another copy in {tilde(prefix)}?",
+                           "no", auto_answer):
+                return version, path
 
-    askuser(f"Download installer from {url}?", "yes", auto_answer, raise_if_no)
+    # --- summary and license (last question) --------------------------
+    target = op.join(prefix, version)
+    what = []
+    if products:
+        what += list(products)
+    if ctf:
+        what += [f"those needed by {op.basename(f)}" for f in ctf]
+    print()
+    print(f"Ready to install {full_name}")
+    print(f"  location:  {tilde(target)}")
+    print(f"  products:  {', '.join(what) or 'all'}")
+    print(f"  license:   {LICENSE_URL}")
+    print("Installing the MATLAB Runtime means that you accept the terms "
+          "of its license.")
+    askuser("Accept the license and install?", "yes", auto_answer,
+            raise_if_no=True)
+    print()
 
     with tempfile.TemporaryDirectory() as tmpdir:
         tmpdir = op.realpath(op.abspath(tmpdir))
 
         # --- download -------------------------------------------------
-        print(f"Downloading from {url} ...")
+        print(f"Downloading {op.basename(url)}")
         installer = url_download(url, tmpdir)
-        print("done ->", installer)
 
         # --- unzip ----------------------------------------------------
         if installer.endswith(".zip"):
-
-            askuser(f"Unzip {installer}?", "yes", auto_answer, raise_if_no)
-            print(f"Unzipping {installer} ...")
-
+            print("Extracting the installer")
             with ZipFileWithExecPerm(installer) as zip:
                 zip.extractall(tmpdir)
 
@@ -195,7 +287,6 @@ def install(
                 installer = op.join(tmpdir, "setup.exe")
             else:
                 installer = op.join(tmpdir, "install")
-            print("done ->", installer)
 
         if not op.exists(installer):
             print("No installer found in archive:", os.listdir(tmpdir))
@@ -216,21 +307,9 @@ def install(
                     "product names cannot be validated."
                 )
             names = resolve_products(requested, available)
-            print("Products to install:", ", ".join(names))
+            print("Selected products:", ", ".join(names))
 
         # --- install --------------------------------------------------
-
-        question = (
-            "BY ENTERING 'YES', YOU ACCEPT THE TERMS OF THE MATLAB RUNTIME "
-            "LICENSE, LINKED BELOW. THE MATLAB RUNTIME INSTALLER WILL BE "
-            "RUN WITH THE ARGUMENT `-agreeToLicense yes`. "
-            "IF YOU ARE NOT WILLING TO DO SO, ENTER 'NO' AND THE "
-            "INSTALLATION WILL BE ABORTED."
-            f"\t{op.join(tmpdir, 'matlabruntime_license_agreement.pdf')}\n"
-        )
-        askuser(question, "yes", auto_answer, raise_if_no)
-        print("License agreed.")
-
         if arch[:3] == "mac" and macos_version() > (10, 14):
             # Only needed if the installer is quarantined (see unquarantine)
             unquarantine(tmpdir, probe=installer)
@@ -249,7 +328,7 @@ def install(
                 "-mode", "silent",
                 "-destinationFolder", prefix,
             ]
-        print("Installing", call, "...")
+        print("Installing (this can take several minutes)")
         # NOTE: capture_output=True is **required** on windows
         # NOTE: `-tmpdir` makes older installers (e.g. R2019b) fail to
         # extract archives ("No such file or directory"), so the installer's
@@ -265,13 +344,10 @@ def install(
                 print(log[-3000:])
                 ret = ret or 1
         if ret:
-            print("Installation failed?")
-        else:
-            print("done ->", find_runtime_in_prefix(version, prefix)
-                  or op.join(prefix, version))
+            print(f"The installer failed (exit code {ret}).")
 
     # --- check --------------------------------------------------------
-    path = find_runtime_in_prefix(version, prefix) or op.join(prefix, version)
+    path = find_runtime_in_prefix(version, prefix) or target
     if not op.exists(op.join(path, "VersionInfo.xml")):
         if op.exists(path):
             print(
@@ -298,22 +374,14 @@ def install(
         )
 
     # --- patch --------------------------------------------------------
-    if arch[:3] == "mac" and patch is not False:
-        if patch is None:
-            yesno = askuser(f"Patch runtime {path}?", "no", auto_answer)
-        else:
-            print(f"Patch runtime {path}")
-            yesno = True
-        if yesno:
-            patch_runtime(path)
+    if arch[:3] == "mac" and patch:
+        print("Patching the runtime")
+        patch_runtime(path)
 
     # --- goodbye ------------------------------------------------------
-    license = op.join(path, license)
-    print("Runtime succesfully installed at:", path)
-    print("License agreement available at:", license)
-
-    # --- all done! ----------------------------------------------------
-    return
+    print(f"{name} installed in {tilde(path)}")
+    print(f"License agreement: {tilde(op.join(path, license))}")
+    return version, path
 
 
 def uninstall(version=None, prefix=None, auto_answer=False,
@@ -584,16 +652,16 @@ def init(
 
     # --- find version  ------------------------------------------------
     python_version = "{}.{}".format(*sys.version_info[:2])
-    release, path = resolve_runtime(
-        version, prefix, python_version=python_version,
-        missing_ok=install_if_missing,
-    )
-
-    # --- install version  ---------------------------------------------
-    if not path:
-        install(release, prefix, auto_answer, patch=patch,
-                products=products, ctf=ctf, default_scope=default_scope)
-        release, path = resolve_runtime(release, prefix)
+    if install_if_missing:
+        release, path = install(
+            version, prefix, auto_answer, patch=patch, products=products,
+            ctf=ctf, default_scope=default_scope,
+            if_missing=True, python_version=python_version,
+        )
+    else:
+        release, path = resolve_runtime(
+            version, prefix, python_version=python_version,
+        )
 
     if python_supported(release, python_version) is None:
         warnings.warn(

@@ -39,6 +39,7 @@ pip install matlab-runtime
 usage: install_matlab_runtime [-h] [-v VERSION ...] [-p PREFIX]
                               [-s {user,system,custom}] [-u] [-y] [-x]
                               [-f PRODUCT ...] [-c FILE ...]
+                              [--if-missing [mwpython]]
 
 Install any matlab runtime in any location.
 
@@ -70,7 +71,7 @@ options:
                     IF YOU ARE NOT WILLING TO DO SO, DO NOT CALL THIS FUNCTION.
                     https://mathworks.com/help/compiler/install-the-matlab-runtime.html
 
-  -x, --patch       Patch the runtime if needed.
+  -x, --patch       Patch the runtime (MacOS, see "Jupyter + libcrypto").
 
   -f, --products    Only install these products, by installer name
                     (e.g. 'MATLAB Runtime - Numerics'), short name
@@ -79,6 +80,39 @@ options:
 
   -c, --ctf         Only install the products required by these compiled
                     CTF archives. Can be combined with '--products'.
+
+  --if-missing [mwpython]
+                    Only install the runtime if no matching installation
+                    is found (then, '--version' defaults to
+                    'latest_installed'). With 'mwpython', only count
+                    installations that ship mwpython (the ones that
+                    mpython can use, on MacOS).
+```
+
+The installer asks two questions: where to install the runtime (unless
+a prefix is provided), then whether you accept the MATLAB Runtime
+license. The download and installation then run without interruption
+(here, on MacOS, with `--default-scope user`):
+
+```text
+Where should the MATLAB Runtime be installed?
+  1. user    ~/Applications/MATLAB/MATLAB_Runtime  (no admin rights needed)
+  2. system  /Applications/MATLAB/MATLAB_Runtime   (may need admin rights)
+  3. custom  another folder
+Location (user/system/custom) [user]:
+
+Ready to install MATLAB Runtime R2025b (Update 7)
+  location:  ~/Applications/MATLAB/MATLAB_Runtime/R2025b
+  products:  all
+  license:   https://mathworks.com/help/compiler/install-the-matlab-runtime.html
+Installing the MATLAB Runtime means that you accept the terms of its license.
+Accept the license and install? [Y/n]
+
+Downloading MATLAB_Runtime_R2025b_Update_7_maca64.zip
+Extracting the installer
+Installing (this can take several minutes)
+MATLAB Runtime R2025b installed in ~/Applications/MATLAB/MATLAB_Runtime/R2025b
+License agreement: ~/Applications/MATLAB/MATLAB_Runtime/R2025b/matlabruntime_license_agreement.pdf
 ```
 
 ### Installation location
@@ -88,10 +122,10 @@ user is asked where to install the runtime:
 
 ```text
 Where should the MATLAB Runtime be installed?
-  [1] user:   /home/me/.local/share/MATLAB/MATLAB_Runtime (no admin rights needed)
-  [2] system: /usr/local/MATLAB/MATLAB_Runtime (may need admin rights)
-  [3] custom: a folder of your choice
-Installation location ([user]/system/custom)
+  1. user    ~/.local/share/MATLAB/MATLAB_Runtime  (no admin rights needed)
+  2. system  /usr/local/MATLAB/MATLAB_Runtime      (may need admin rights)
+  3. custom  another folder
+Location (user/system/custom) [user]:
 ```
 
 | Scope | Windows | Linux | MacOS |
@@ -160,6 +194,17 @@ Install only a subset of products (by name, or required by CTF files):
 ```python
 install("R2024b", products=["Numerics", "MATLAB Runtime - Python"], auto_answer=True)
 install("R2024b", ctf=["path/to/my_matlab_project.ctf"], auto_answer=True)
+```
+
+Install a runtime only if it is missing (nothing is asked or printed if
+a matching runtime is found). `install` returns the release and the
+location of the runtime (installed or found):
+
+```python
+release, path = install("R2024b", if_missing=True, default_scope="user")
+
+# Only count runtimes that `mpython` can use (MacOS)
+release, path = install("R2024b", if_missing="mwpython")
 ```
 
 Import a compiled MATLAB package:
@@ -255,12 +300,14 @@ def install(
     products=None,
     ctf=None,
     default_scope=None,
+    if_missing=False,
+    python_version=None,
 ):
     """
     Install the matlab runtime.
 
     !!! warning
-        BY SETTING `default_answer=True`, YOU ACCEPT THE TERMS OF THE
+        BY SETTING `auto_answer=True`, YOU ACCEPT THE TERMS OF THE
         MATLAB RUNTIME LICENSE. THE MATLAB RUNTIME INSTALLER WILL BE
         RUN WITH THE ARGUMENT `-agreeToLicense yes`.
         IF YOU ARE NOT WILLING TO DO SO, DO NOT CALL THIS FUNCTION.
@@ -271,15 +318,17 @@ def install(
     ----------
     version : [list of] str, default="latest"
         MATLAB version, such as 'latest' or 'R2022b' or '9.13'.
+        With `if_missing`, the default is 'latest_installed'.
     prefix : str, optional
         Install location. Default: `$MATLAB_RUNTIME_PATH` if set, else
         the user is asked to choose between "user" (`user_prefix()`),
         "system" (`guess_prefix()`) and "custom" (a folder they type).
-    default_answer : bool
+    auto_answer : bool
         Default answer to all questions.
         **This entails accepting the MATLAB Runtime license agreement.**
-    patch : bool
-        Patch the runtime if needed (MacOS only).
+    patch : bool, optional
+        Patch the runtime (MacOS only, see "Jupyter + libcrypto").
+        Default: no.
     products : [list of] str, optional
         Only install these products. Products can be specified by
         installer name (e.g., 'MATLAB Runtime - Numerics'),
@@ -291,11 +340,27 @@ def install(
     default_scope : {"user", "system", "custom"}, default="system"
         Installation location chosen when `prefix` is not provided and
         the user just presses Enter (or when `auto_answer` is set).
+    if_missing : bool | {"mwpython"}, default=False
+        Only install the runtime if no matching installation is found;
+        if one is found, nothing is asked or printed, and it is
+        returned. With "mwpython", only count installations that ship
+        `bin/mwpython` (the ones that `mpython` can use, on MacOS).
+    python_version : str | False, optional
+        With `if_missing`, only count releases that support this python
+        version. Default: the running python. False: do not check.
+
+    Returns
+    -------
+    release : str
+        MATLAB release (e.g. 'R2024b').
+    path : str
+        Root of the installation (installed or found).
+        A list of `(release, path)` is returned if `version` is a list.
 
     Raises
     ------
     UserInterruptionError
-        If the user answers no to a question.
+        If the user declines the installation.
     ValueError
         If a requested product is unknown.
 
@@ -660,6 +725,19 @@ supports the running python) is not installed, `mpython` offers to
 install it when run from an interactive terminal (unless
 `MATLAB_RUNTIME_OFFLINE=1`); otherwise it prints the
 `install_matlab_runtime --version ...` command to run.
+
+Applications that start `mpython` themselves (e.g. with `mwpython2`) and
+want to choose the installation options (location, products) can
+install the runtime first:
+
+```python
+from matlab_runtime import install
+from matlab_runtime.cli import mwpython2
+
+install("R2024b", if_missing="mwpython", default_scope="user",
+        ctf="path/to/my_matlab_project.ctf")
+mwpython2(["-variant", "R2024b", "-m", "my_module"])
+```
 
 That said, the `matplotlib` package still cannot be used with this wrapper
 (nor can it be used with MATLAB's `mwpython`). To use both, see
